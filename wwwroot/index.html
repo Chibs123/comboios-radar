@@ -1,0 +1,1147 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Live Train Radar — Portugal</title>
+  
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;600;700;800&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap" rel="stylesheet">
+  
+  <!-- MapLibre GL CSS -->
+  <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background-color: #0b0d13;
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      height: 100vh;
+      width: 100vw;
+      overflow: hidden;
+    }
+
+    #map {
+      width: 100%;
+      height: 100%;
+    }
+
+    #map canvas {
+      filter: brightness(1.18) contrast(1.06);
+    }
+
+    /* --- LOADER OVERLAY RADAR --- */
+    #appLoader {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: radial-gradient(circle at center, #0f172a 0%, #06080e 100%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 22px;
+      z-index: 9999;
+      transition: opacity 0.6s ease, visibility 0.6s ease;
+    }
+
+    #appLoader.hidden {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+    }
+
+    .radar-spinner-container {
+      position: relative;
+      width: 76px;
+      height: 76px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .radar-pulse-ring {
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      border-radius: 50%;
+      border: 1.5px solid rgba(56, 189, 248, 0.45);
+      animation: radarRipples 2s infinite ease-out;
+    }
+
+    .radar-spinner {
+      width: 50px;
+      height: 50px;
+      border: 2.5px solid rgba(255, 255, 255, 0.08);
+      border-top-color: #38bdf8;
+      border-right-color: #38bdf8;
+      border-radius: 50%;
+      animation: spin 0.9s cubic-bezier(0.55, 0.15, 0.45, 0.85) infinite;
+      box-shadow: 0 0 20px rgba(56, 189, 248, 0.4);
+    }
+
+    .radar-core-dot {
+      position: absolute;
+      width: 8px;
+      height: 8px;
+      background-color: #ffffff;
+      border-radius: 50%;
+      box-shadow: 0 0 12px #ffffff;
+    }
+
+    .loader-brand {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 1.15rem;
+      font-weight: 800;
+      letter-spacing: 0.32em;
+      text-transform: uppercase;
+      color: #ffffff;
+      text-align: center;
+      animation: neonPulse 2.2s infinite ease-in-out;
+      user-select: none;
+    }
+
+    .loader-subtext {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.70rem;
+      font-weight: 600;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: #64748b;
+      margin-top: -12px;
+    }
+
+    @keyframes neonPulse {
+      0%, 100% { text-shadow: 0 0 4px rgba(255, 255, 255, 0.8); opacity: 0.85; }
+      50% { text-shadow: 0 0 20px rgba(56, 189, 248, 0.9); opacity: 1; }
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    @keyframes radarRipples {
+      0% { transform: scale(0.65); opacity: 0.95; }
+      100% { transform: scale(1.7); opacity: 0; }
+    }
+
+    .sidebar-panel {
+      position: absolute;
+      top: 18px;
+      left: 18px;
+      z-index: 10;
+      width: 300px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      background: rgba(14, 18, 27, 0.90);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 20px;
+      padding: 16px;
+      backdrop-filter: blur(14px);
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.7);
+    }
+
+    .brand-title {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.85rem;
+      font-weight: 800;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: #ffffff;
+      user-select: none;
+    }
+
+    .operator-toggle {
+      display: flex;
+      background: rgba(0, 0, 0, 0.5);
+      padding: 4px;
+      border-radius: 12px;
+      gap: 6px;
+    }
+
+    .btn-op {
+      flex: 1;
+      border: none;
+      background: transparent;
+      color: #94a3b8;
+      font-size: 0.76rem;
+      font-weight: 700;
+      padding: 7px 0;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .btn-op.active.fertagus {
+      background: #10b981;
+      color: #032514;
+    }
+
+    .btn-op.active.cp {
+      background: #0284c7;
+      color: #ffffff;
+    }
+
+    .live-status {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.7rem;
+      font-weight: 600;
+      color: #94a3b8;
+      line-height: 1.5;
+    }
+    .live-status b { color: #10b981; font-size: 0.85rem; }
+
+    .sidebar-panel { max-height: calc(100vh - 36px); }
+
+    .list-head { white-space: nowrap;
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      font-family: 'JetBrains Mono', monospace; font-size: 0.68rem; font-weight: 700;
+      letter-spacing: 0.12em; text-transform: uppercase; color: #94a3b8;
+    }
+    .list-head input {
+      width: 110px; background: rgba(0, 0, 0, 0.45); border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 8px; color: #f8fafc; font-size: 0.72rem; padding: 5px 8px; outline: none;
+      font-family: 'Plus Jakarta Sans', sans-serif; letter-spacing: 0; text-transform: none;
+    }
+    .list-head input:focus { border-color: #38bdf8; }
+
+    .train-list {
+      flex: 1 1 auto; min-height: 0; overflow-y: auto; margin: 0 -6px; padding: 0 6px;
+      scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+    }
+    .train-row {
+      display: flex; align-items: center; gap: 9px; padding: 8px 8px; border-radius: 10px; cursor: pointer;
+    }
+    .train-row:hover { background: rgba(255, 255, 255, 0.07); }
+    .train-row.parked { opacity: 0.55; }
+    .tr-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+    .tr-id { font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 0.8rem; color: #fff; min-width: 46px; }
+    .tr-main { flex: 1; min-width: 0; }
+    .tr-route { font-size: 0.76rem; font-weight: 700; color: #e2e8f0; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .tr-sub { font-size: 0.66rem; color: #94a3b8; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .tr-time { font-family: 'JetBrains Mono', monospace; font-size: 0.72rem; font-weight: 700; color: #cbd5e1; flex: none; }
+    .tr-badge { font-family: 'JetBrains Mono', monospace; font-size: 0.68rem; font-weight: 700; padding: 2px 6px; border-radius: 6px; flex: none; }
+    .tr-empty { font-size: 0.74rem; color: #64748b; padding: 10px 4px; }
+
+    .maplibregl-popup-content {
+      background: rgba(14, 20, 32, 0.95) !important;
+      border: 1px solid rgba(255, 255, 255, 0.15) !important;
+      border-radius: 8px !important;
+      color: #f8fafc !important;
+      padding: 10px 14px !important;
+    }
+
+    .maplibregl-popup-tip {
+      border-top-color: rgba(14, 20, 32, 0.95) !important;
+    }
+  </style>
+  
+  <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
+</head>
+<body>
+
+  <div id="appLoader">
+    <div class="radar-spinner-container">
+      <div class="radar-pulse-ring"></div>
+      <div class="radar-spinner"></div>
+      <div class="radar-core-dot"></div>
+    </div>
+    <div class="loader-brand">COMBOIOS DE PORTUGAL</div>
+    <div class="loader-subtext">A INICIALIZAR MAPA</div>
+  </div>
+
+  <aside class="sidebar-panel">
+    <div class="brand-title">COMBOIOS DE PORTUGAL</div>
+    <div class="operator-toggle">
+      <button class="btn-op active cp" id="btnCP" onclick="selecionarOperador('cp')">CP</button>
+      <button class="btn-op" id="btnFT" onclick="selecionarOperador('fertagus')">FERTAGUS</button>
+    </div>
+    <div class="live-status" id="liveStatus"></div>
+    <div class="list-head">
+      <span id="listaTitulo">Ativos</span>
+      <input id="filtroLista" type="search" placeholder="Filtrar…" autocomplete="off">
+    </div>
+    <div class="train-list" id="trainList"></div>
+  </aside>
+
+  <div id="map"></div>
+
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+
+  <script>
+    const API_BASE = window.location.origin;
+    let activeOperator = "cp";
+
+    const map = new maplibregl.Map({
+      container: 'map',
+      style: 'https://tiles.openfreemap.org/styles/dark',
+      center: [-8.22, 39.55],
+      zoom: 6.3,
+      minZoom: 5.5,
+      maxZoom: 12,
+      maxBoundsViscosity: 1.0
+    });
+
+    // Só um cartão aberto de cada vez: fecha o anterior antes de abrir outro
+    let popupAtual = null;
+    function novoPopup(opcoes) {
+      if (popupAtual) popupAtual.remove();
+      popupAtual = new maplibregl.Popup(opcoes);
+      popupAtual.on('close', () => { SEGUIR = null; });
+      return popupAtual;
+    }
+
+    // Modo "seguir": a câmara acompanha um comboio até arrastares o mapa ou fechares o cartão
+    let SEGUIR = null;
+    function seguirComboio(op, id, btn) {
+      const igual = SEGUIR && SEGUIR.op === op && SEGUIR.id === id;
+      SEGUIR = igual ? null : { op, id };
+      if (btn) btn.textContent = SEGUIR ? 'A seguir ✓' : 'Seguir';
+    }
+    map.on('dragstart', () => { SEGUIR = null; });
+
+    // Afasta cada sentido para o seu lado da via (efeito só visual, ~7 px) para os marcadores não se sobreporem
+    function offsetMetros() {
+      const z = map.getZoom();
+      return z >= 11 ? 7 * 78271.5 * Math.cos(38.7 * Math.PI / 180) / Math.pow(2, z) : 0;
+    }
+    function deslocarLateral(pos, bearing, m) {
+      if (!m) return pos;
+      const r = (bearing + 90) * Math.PI / 180;
+      return [pos[0] + (m * Math.sin(r)) / (111320 * Math.cos(pos[1] * Math.PI / 180)), pos[1] + (m * Math.cos(r)) / 111320];
+    }
+
+    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right');
+
+    function esconderLoader() {
+      const loader = document.getElementById("appLoader");
+      if (loader && !loader.classList.contains("hidden")) {
+        loader.classList.add("hidden");
+      }
+    }
+
+    map.on('load', async () => {
+      if (map.getLayer('railway')) {
+        map.setPaintProperty('railway', 'line-color', '#1c4122');
+        map.setPaintProperty('railway', 'line-width', 2.2);
+        map.setLayerZoomRange('railway', 1, 24);
+      }
+      if (map.getLayer('railway_minor')) {
+        map.setPaintProperty('railway_minor', 'line-color', '#112714');
+        map.setLayerZoomRange('railway_minor', 1, 24);
+      }
+
+      if (map.getLayer('boundary_country')) {
+        map.setLayoutProperty('boundary_country', 'visibility', 'none');
+      }
+
+      map.addSource('fronteira-terrestre-pt', {
+        type: 'geojson',
+        data: {
+          type: 'Feature',
+          geometry: {
+            type: 'LineString',
+            coordinates: [
+              [-8.868, 41.868], [-8.850, 41.890], [-8.832, 41.912], [-8.790, 41.932], 
+              [-8.742, 41.948], [-8.695, 41.980], [-8.643, 42.030], 
+              [-8.570, 42.062], [-8.502, 42.082], [-8.420, 42.100], [-8.356, 42.115], 
+              [-8.275, 42.124], [-8.220, 42.140], [-8.176, 42.154], 
+              [-8.160, 42.110], [-8.145, 42.068], [-8.132, 41.995], [-8.115, 41.960], 
+              [-8.070, 41.945], [-8.032, 41.932], [-7.985, 41.921], [-7.940, 41.895], 
+              [-7.892, 41.855], [-7.840, 41.870], [-7.785, 41.878], [-7.730, 41.865], 
+              [-7.682, 41.854], [-7.610, 41.820], [-7.542, 41.792], [-7.468, 41.742], 
+              [-7.410, 41.765], [-7.352, 41.815], [-7.295, 41.860], [-7.245, 41.892], 
+              [-7.190, 41.885], [-7.142, 41.875], [-7.050, 41.860], [-6.952, 41.854], 
+              [-6.880, 41.875], [-6.812, 41.895], [-6.755, 41.872], [-6.690, 41.855], 
+              [-6.625, 41.845], [-6.570, 41.815], [-6.512, 41.782], [-6.465, 41.740], 
+              [-6.425, 41.695], [-6.405, 41.640], [-6.385, 41.585], 
+              [-6.280, 41.545], [-6.195, 41.512], [-6.210, 41.465], [-6.265, 41.425], 
+              [-6.320, 41.385], [-6.385, 41.352], [-6.460, 41.320], [-6.542, 41.285], 
+              [-6.615, 41.235], [-6.685, 41.185], [-6.715, 41.160], [-6.745, 41.142], 
+              [-6.785, 41.085], [-6.825, 41.025], [-6.865, 40.990], [-6.895, 40.952], 
+              [-6.875, 40.900], [-6.852, 40.852], [-6.835, 40.730], [-6.832, 40.608], 
+              [-6.870, 40.545], [-6.912, 40.485], [-6.950, 40.415], [-6.985, 40.352], 
+              [-7.000, 40.265], [-7.012, 40.185], [-7.005, 40.090], [-6.995, 39.952], 
+              [-7.040, 39.895], [-7.085, 39.845], [-7.120, 39.750], [-7.152, 39.662], 
+              [-7.215, 39.645], [-7.285, 39.625], [-7.355, 39.605], [-7.425, 39.585], 
+              [-7.480, 39.545], [-7.532, 39.502], [-7.480, 39.440], [-7.425, 39.385], 
+              [-7.385, 39.250], [-7.352, 39.122], [-7.250, 39.050], [-7.152, 38.982], 
+              [-7.105, 38.930], [-7.062, 38.882], [-7.120, 38.765], [-7.185, 38.652], 
+              [-7.235, 38.565], [-7.285, 38.485], [-7.270, 38.445], [-7.252, 38.412], 
+              [-7.220, 38.350], [-7.185, 38.285], [-7.150, 38.220], [-7.112, 38.162], 
+              [-7.052, 38.125], [-7.085, 38.085], [-7.125, 38.052], [-7.185, 38.030], 
+              [-7.245, 38.012], [-7.300, 38.000], [-7.352, 37.985], [-7.390, 37.900], 
+              [-7.425, 37.812], [-7.445, 37.730], [-7.462, 37.652], [-7.495, 37.595], 
+              [-7.525, 37.542], [-7.505, 37.485], [-7.485, 37.425], 
+              [-7.460, 37.405], [-7.442, 37.382], [-7.450, 37.320], [-7.465, 37.262], 
+              [-7.440, 37.215], [-7.418, 37.178]
+            ]
+          }
+        }
+      });
+
+      map.addLayer({
+        id: 'fronteira-terrestre-line',
+        type: 'line',
+        source: 'fronteira-terrestre-pt',
+        layout: { 'line-join': 'round', 'line-cap': 'round' },
+        paint: {
+          'line-color': '#e2e8f0',
+          'line-width': 1.4,
+          'line-opacity': 0.65,
+          'line-dasharray': [4, 3]
+        }
+      });
+
+      map.addSource('stations', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] }
+      });
+
+      map.addLayer({
+        id: 'stations-hitbox', minzoom: 8,
+        type: 'circle',
+        source: 'stations',
+        paint: { 'circle-radius': 16, 'circle-opacity': 0 }
+      });
+
+      map.addLayer({
+        id: 'stations-ring', minzoom: 8,
+        type: 'circle',
+        source: 'stations',
+        paint: {
+          'circle-color': '#090d16',
+          'circle-radius': ['interpolate', ['linear'], ['zoom'], 6, 2.5, 11, 4.5, 16, 6],
+          'circle-stroke-width': 2,
+          'circle-stroke-color': ['case', ['==', ['get', 'operator'], 'cp'], '#0284c7', '#22c55e']
+        }
+      });
+
+      map.addLayer({
+        id: 'stations-label',
+        type: 'symbol',
+        source: 'stations',
+        minzoom: 10,
+        layout: {
+          'text-field': ['get', 'name'],
+          'text-size': 11,
+          'text-offset': [0, 1.2],
+          'text-anchor': 'top',
+          'text-allow-overlap': false
+        },
+        paint: {
+          'text-color': '#cbd5e1',
+          'text-halo-color': '#090d16',
+          'text-halo-width': 2
+        }
+      });
+
+      map.on('mouseenter', 'stations-hitbox', () => { map.getCanvas().style.cursor = 'pointer'; });
+      map.on('mouseleave', 'stations-hitbox', () => { map.getCanvas().style.cursor = ''; });
+
+      map.on('click', 'stations-hitbox', (e) => {
+        const coords = e.features[0].geometry.coordinates.slice();
+        const { name, code } = e.features[0].properties;
+
+        novoPopup({ offset: 8 })
+          .setLngLat(coords)
+          .setHTML(`
+            <div style="font-size:0.72rem; text-transform:uppercase; color:#94a3b8; font-weight:700;">Estação</div>
+            <div style="font-size:1.05rem; font-weight:800; color:#fff;">${name}</div>
+            <div style="font-size:0.7rem; color:#64748b; font-family:'JetBrains Mono',monospace;">ID: ${code}</div>
+          `)
+          .addTo(map);
+      });
+
+      atualizarEstadoPainel();
+      iniciarRadarFertagus();
+      iniciarRadarCP();
+
+      await carregarEstacoes();
+      esconderLoader();
+    });
+
+
+    // =====================================================================
+    // RADAR FERTAGUS — DESLIZAMENTO SUAVE EM 60 FPS
+    // =====================================================================
+    const FRAME_MS = 1000 / 30; // a 30 fps o movimento é sub-pixel por frame: igual a 60 fps a olho, com metade do custo
+
+    const FT = {
+      line: null, coords: null, cum: null, total: 0,
+      km: {}, stations: {}, trips: [], ready: false, error: false,
+      rafId: null, last: 0, count: -1, parados: 0, nFeat: -1, ultimas: [], angles: new Map(),
+      baseEpochSeconds: 0, basePerf: 0
+    };
+
+    // Tabela de distâncias acumuladas: posição por km sem chamar turf.along a cada frame
+    function prepararLinhaFT(coords) {
+      const cum = [0];
+      for (let i = 1; i < coords.length; i++) {
+        cum.push(cum[i - 1] + turf.distance(coords[i - 1], coords[i], { units: 'kilometers' }));
+      }
+      FT.coords = coords; FT.cum = cum; FT.total = cum[cum.length - 1];
+    }
+
+    function posNaLinha(km) {
+      const { coords, cum } = FT;
+      km = Math.max(0, Math.min(FT.total, km));
+      let lo = 0, hi = cum.length - 1;
+      while (hi - lo > 1) {
+        const mid = (lo + hi) >> 1;
+        if (cum[mid] <= km) lo = mid; else hi = mid;
+      }
+      const seg = cum[hi] - cum[lo];
+      const f = seg > 0 ? (km - cum[lo]) / seg : 0;
+      return [coords[lo][0] + (coords[hi][0] - coords[lo][0]) * f, coords[lo][1] + (coords[hi][1] - coords[lo][1]) * f];
+    }
+
+    function rumoGraus(a, b) {
+      const k = Math.cos(a[1] * Math.PI / 180);
+      return (Math.atan2((b[0] - a[0]) * k, b[1] - a[1]) * 180 / Math.PI + 360) % 360;
+    }
+
+    // Aproxima o ângulo atual do alvo pelo caminho mais curto (evita rotações bruscas)
+    function suavizarAngulo(atual, alvo, k) {
+      const d = ((alvo - atual + 540) % 360) - 180;
+      return (atual + d * k + 360) % 360;
+    }
+
+    function sincronizarRelogioLisboa() {
+      const now = new Date();
+      const p = new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Europe/Lisbon', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+      }).formatToParts(now);
+      const g = t => Number(p.find(x => x.type === t).value);
+      const secs = (g('hour') % 24) * 3600 + g('minute') * 60 + g('second') + (now.getMilliseconds() / 1000);
+      FT.baseEpochSeconds = secs;
+      FT.basePerf = performance.now();
+    }
+
+    // Leitura contínua em alta resolução (com frações de segundo reais)
+    function agoraLisboaFluido() {
+      const elapsed = (performance.now() - FT.basePerf) / 1000;
+      return (FT.baseEpochSeconds + elapsed) % 86400;
+    }
+
+    function fmtHora(secs) {
+      const s = ((secs % 86400) + 86400) % 86400;
+      return String(Math.floor(s / 3600)).padStart(2, '0') + ':' + String(Math.floor((s % 3600) / 60)).padStart(2, '0');
+    }
+
+    function criarIconeSeta() {
+      const size = 48, c = document.createElement('canvas');
+      c.width = c.height = size;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.moveTo(size / 2, 8);
+      ctx.lineTo(size / 2 + 9, size / 2 + 9);
+      ctx.lineTo(size / 2, size / 2 + 4);
+      ctx.lineTo(size / 2 - 9, size / 2 + 9);
+      ctx.closePath();
+      ctx.fill();
+      map.addImage('train-arrow', ctx.getImageData(0, 0, size, size));
+    }
+
+    function adicionarCamadasFertagus() {
+      map.addSource('fertagus-track', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+      map.addLayer({
+        id: 'fertagus-track-line', type: 'line', source: 'fertagus-track',
+        layout: { 'line-join': 'round', 'line-cap': 'round', visibility: 'none' },
+        paint: { 'line-color': '#10b981', 'line-width': 2.5, 'line-opacity': 0.0 }
+      });
+
+      criarIconeSeta();
+      map.addSource('fertagus-trains', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+      map.addLayer({
+        id: 'fertagus-trains-halo', type: 'circle', source: 'fertagus-trains',
+        layout: { visibility: 'none' },
+        paint: {
+          'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 9, 14, 15],
+          'circle-color': ['case', ['==', ['get', 'dir'], 'sul'], '#0ea5e9', '#10b981'],
+          'circle-opacity': ['case', ['==', ['get', 'estac'], 1], 0.5, 0.95],
+          'circle-stroke-width': 2, 'circle-stroke-color': '#06080e'
+        }
+      });
+      map.addLayer({
+        id: 'fertagus-trains-arrow', type: 'symbol', source: 'fertagus-trains',
+        layout: {
+          visibility: 'none',
+          'icon-image': 'train-arrow', 'icon-size': 0.6,
+          'icon-rotate': ['get', 'bearing'], 'icon-rotation-alignment': 'map',
+          'icon-allow-overlap': true, 'icon-ignore-placement': true
+        }
+      });
+      map.addLayer({
+        id: 'fertagus-trains-label', type: 'symbol', source: 'fertagus-trains', minzoom: 10,
+        layout: {
+          visibility: 'none', 'text-field': ['get', 'id'], 'text-size': 11,
+          'text-offset': [0, -1.7], 'text-anchor': 'bottom', 'text-allow-overlap': true
+        },
+        paint: { 'text-color': '#f8fafc', 'text-halo-color': '#090d16', 'text-halo-width': 2 }
+      });
+
+      map.on('mouseenter', 'fertagus-trains-halo', () => { map.getCanvas().style.cursor = 'pointer'; });
+      map.on('mouseleave', 'fertagus-trains-halo', () => { map.getCanvas().style.cursor = ''; });
+      map.on('click', 'fertagus-trains-halo', (e) => {
+        const f = e.features[0];
+        abrirPopupFertagus(f.properties, f.geometry.coordinates.slice());
+      });
+    }
+
+    function abrirPopupFertagus(p, coords) {
+      const occ = p.ocupacao !== undefined && p.ocupacao !== 'null' && p.ocupacao !== '' ? `${Math.round(Number(p.ocupacao))}%` : '—';
+      novoPopup({ offset: 14 })
+        .setLngLat(coords)
+        .setHTML(`
+          <div style="font-size:0.72rem; text-transform:uppercase; color:#94a3b8; font-weight:700;">Fertagus · ${p.dir === 'sul' ? 'Sentido Margem Sul' : 'Sentido Lisboa'}</div>
+          <div style="font-size:1.05rem; font-weight:800; color:#fff;">Comboio ${esc(p.id)}</div>
+          ${p.dest ? `<div style="font-size:0.78rem; color:#cbd5e1;">Destino: <b>${esc(p.dest)}</b></div>` : ''}
+          <div style="font-size:0.78rem; color:#cbd5e1;">${esc(p.status)}</div>
+          ${p.next ? `<div style="font-size:0.78rem; color:#cbd5e1;">Próxima: <b>${esc(p.next)}</b> às ${esc(p.eta)}</div>` : ''}
+          <div style="font-size:0.7rem; color:#64748b; font-family:'JetBrains Mono',monospace;">${p.carruagens || '?'} carruagens · ocupação ${occ}</div>
+        <button onclick="seguirComboio('fertagus','${esc(p.id)}',this)" style="margin-top:8px;width:100%;padding:5px 0;border:0;border-radius:6px;background:#38bdf8;color:#06080e;font-weight:700;cursor:pointer">Seguir</button>
+`).addTo(map);
+    }
+
+    async function iniciarRadarFertagus() {
+      adicionarCamadasFertagus();
+      sincronizarRelogioLisboa();
+      setInterval(sincronizarRelogioLisboa, 60000); // re-sincronizar drift a cada minuto
+
+      try {
+        const [trackRes, schedRes] = await Promise.all([
+          fetch(`${API_BASE}/api/tracks/fertagus`),
+          fetch(`${API_BASE}/api/trains/fertagus/schedule`)
+        ]);
+        const track = await trackRes.json();
+        const linha = track.type === 'FeatureCollection' ? track.features.find(f => f.geometry && f.geometry.type === 'LineString') : track;
+        const sched = await schedRes.json();
+
+        map.getSource('fertagus-track').setData(linha);
+        FT.line = turf.lineString(linha.geometry.coordinates);
+        prepararLinhaFT(linha.geometry.coordinates);
+        FT.stations = sched.stations;
+
+        for (const [k, st] of Object.entries(sched.stations)) {
+          const snap = turf.nearestPointOnLine(FT.line, turf.point([st.lon, st.lat]), { units: 'kilometers' });
+          FT.km[k] = snap.properties.location;
+        }
+
+        FT.trips = sched.trips.map(t => ({
+          ...t,
+          stops: t.stops.filter(s => FT.km[s.k] !== undefined).map(s => ({ k: s.k, t: s.t, km: FT.km[s.k] }))
+        })).filter(t => t.stops.length >= 2);
+        FT.trips.forEach(t => { t.destName = FT.stations[t.stops[t.stops.length - 1].k].name; });
+
+        FT.ready = true;
+        iniciarAnimacaoFertagus();
+        atualizarEstadoPainel();
+      } catch (err) {
+        console.error("Erro ao iniciar radar Fertagus:", err);
+        FT.error = true;
+        atualizarEstadoPainel();
+      }
+    }
+
+    // Janelas em que o comboio já aparece parado na estação de origem / ainda fica no terminal.
+    // Ajusta estes valores se quiseres que coincidam com o Live Tagus.
+    const FT_PRE_S = 10 * 60;   // antes da partida
+    const FT_POST_S = 5 * 60;   // depois da chegada
+
+    function estadoComboio(trip, now) {
+      const stops = trip.stops, first = stops[0], last = stops[stops.length - 1];
+
+      for (const off of [-86400, 0, 86400]) {   // ±24h: viagens que cruzam a meia-noite
+        const t = now + off;
+        if (t < first.t - FT_PRE_S || t > last.t + FT_POST_S) continue;
+
+        // Estacionado na origem, antes de partir
+        if (t < first.t) {
+          const nx = stops[1];
+          return {
+            km: first.km, dir: nx.km >= first.km ? 1 : -1, estac: true,
+            status: `Parado em ${FT.stations[first.k].name} · parte às ${fmtHora(first.t)}`,
+            next: nx, nextT: nx.t
+          };
+        }
+
+        // Já chegou ao terminal
+        if (t >= last.t) {
+          const pv = stops[stops.length - 2];
+          return {
+            km: last.km, dir: last.km >= pv.km ? 1 : -1, estac: true,
+            status: `Chegou a ${FT.stations[last.k].name}`,
+            next: null, nextT: last.t
+          };
+        }
+
+        for (let i = 0; i < stops.length - 1; i++) {
+          const a = stops[i], b = stops[i + 1];
+          if (t < a.t || t > b.t) continue;
+          const dwell = Math.min(30, (b.t - a.t) * 0.3);
+          const dir = b.km >= a.km ? 1 : -1;
+          if (t < a.t + dwell) {
+            return { km: a.km, dir, estac: false, status: `Parado em ${FT.stations[a.k].name}`, next: b, nextT: b.t };
+          }
+          const f = (t - (a.t + dwell)) / (b.t - (a.t + dwell));
+          const e = f * f * (3 - 2 * f); // Curva cúbica suave de aceleração e desaceleração
+          return { km: a.km + (b.km - a.km) * e, dir, estac: false, status: `A caminho de ${FT.stations[b.k].name}`, next: b, nextT: b.t };
+        }
+      }
+      return null;
+    }
+
+    function animarLoopFertagus(ts) {
+      if (!FT.ready || activeOperator !== 'fertagus') return;
+      FT.rafId = requestAnimationFrame(animarLoopFertagus);
+      if (ts - FT.last < FRAME_MS) return;
+      const dt = Math.min(0.25, (ts - FT.last) / 1000);
+      FT.last = ts;
+
+      const now = agoraLisboaFluido();
+      const features = [];
+      let emCirculacao = 0, alvoSeguir = null;
+      const offM = offsetMetros();
+
+      for (const trip of FT.trips) {
+        const s = estadoComboio(trip, now);
+        if (!s) continue;
+        if (!s.estac) emCirculacao++;
+
+        // Coordenada exata em cima do carril, sem desvio lateral
+        const pos = posNaLinha(s.km);
+
+        // Rumo alinhado estritamente com a direção de marcha
+        const alvo = rumoGraus(
+          posNaLinha(s.km - 0.05 * s.dir), 
+          posNaLinha(s.km + 0.05 * s.dir)
+        );
+        const prev = FT.angles.get(trip.id);
+        const bearing = prev === undefined ? alvo : suavizarAngulo(prev, alvo, 1 - Math.exp(-dt / 0.25));
+        FT.angles.set(trip.id, bearing);
+
+        if (SEGUIR && SEGUIR.op === 'fertagus' && SEGUIR.id === String(trip.id)) {
+          alvoSeguir = pos;
+        }
+
+        features.push({
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: pos },
+          properties: {
+            id: String(trip.id),
+            dir: trip.dir,
+            dest: trip.destName,
+            estac: s.estac ? 1 : 0,
+            bearing,
+            carruagens: trip.carruagens,
+            ocupacao: trip.ocupacao === null ? '' : trip.ocupacao,
+            status: s.status,
+            next: s.next ? FT.stations[s.next.k].name : '',
+            eta: s.next ? fmtHora(s.nextT) : ''
+          }
+        });
+      }
+
+      if (alvoSeguir) map.setCenter(alvoSeguir);
+      FT.ultimas = features;
+      const src = map.getSource('fertagus-trains');
+      if (src && (features.length || FT.nFeat !== 0)) src.setData({ type: 'FeatureCollection', features });
+      FT.nFeat = features.length;
+
+      const parados = features.length - emCirculacao;
+      if (emCirculacao !== FT.count || parados !== FT.parados) {
+        FT.count = emCirculacao;
+        FT.parados = parados;
+        atualizarEstadoPainel();
+      }
+    }
+
+    function iniciarAnimacaoFertagus() {
+      cancelAnimationFrame(FT.rafId);
+      if (activeOperator === 'fertagus' && FT.ready) {
+        FT.rafId = requestAnimationFrame(animarLoopFertagus);
+      }
+    }
+
+
+    // =====================================================================
+    // RADAR CP — movimento linear contínuo, com a duração real entre leituras
+    // =====================================================================
+    const CP = { trains: new Map(), features: [], dirty: true, error: null, rafId: null, poll: null, busy: false, last: 0 };
+    const CP_POLL_MS = 4000;
+
+    function esc(t) {
+      return String(t ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+
+    function textoAtraso(m) {
+      if (m >= 1) return `<span style="color:${m >= 6 ? '#f87171' : '#fbbf24'}">${m} min de atraso</span>`;
+      return '<span style="color:#4ade80">Sem atraso</span>';
+    }
+
+    function iniciarRadarCP() {
+      // buffer 0 e maxzoom 12: menos trabalho no worker a cada setData
+      map.addSource('cp-trains', { type: 'geojson', buffer: 0, maxzoom: 12, data: { type: 'FeatureCollection', features: [] } });
+      map.addLayer({
+        id: 'cp-trains-halo', type: 'circle', source: 'cp-trains',
+        paint: {
+          'circle-radius': ['interpolate', ['linear'], ['zoom'], 6, 5, 10, 8, 14, 13],
+          'circle-color': ['case', ['>=', ['get', 'delayMin'], 6], '#ef4444', ['>=', ['get', 'delayMin'], 1], '#f59e0b', '#4ade80'],
+          'circle-stroke-width': 2, 'circle-stroke-color': '#06080e'
+        }
+      });
+      map.addLayer({
+        id: 'cp-trains-arrow', type: 'symbol', source: 'cp-trains',
+        layout: {
+          'icon-image': 'train-arrow',
+          'icon-size': ['interpolate', ['linear'], ['zoom'], 6, 0.3, 10, 0.45, 14, 0.6],
+          'icon-rotate': ['get', 'bearing'], 'icon-rotation-alignment': 'map',
+          'icon-allow-overlap': true, 'icon-ignore-placement': true
+        }
+      });
+      map.addLayer({
+        id: 'cp-trains-label', type: 'symbol', source: 'cp-trains', minzoom: 9,
+        layout: {
+          'text-field': ['get', 'id'], 'text-size': 11,
+          'text-offset': [0, -1.5], 'text-anchor': 'bottom', 'text-allow-overlap': false
+        },
+        paint: { 'text-color': '#f8fafc', 'text-halo-color': '#090d16', 'text-halo-width': 2 }
+      });
+
+      map.on('mouseenter', 'cp-trains-halo', () => { map.getCanvas().style.cursor = 'pointer'; });
+      map.on('mouseleave', 'cp-trains-halo', () => { map.getCanvas().style.cursor = ''; });
+      map.on('click', 'cp-trains-halo', (e) => {
+        const f = e.features[0];
+        abrirPopupCP(f.properties, f.geometry.coordinates.slice());
+      });
+
+      ligarCP(activeOperator === 'cp');
+    }
+
+    function abrirPopupCP(p, coords) {
+      const rota = p.origin && p.destination ? `${esc(p.origin)} → ${esc(p.destination)}` : '';
+      novoPopup({ offset: 14 })
+        .setLngLat(coords)
+        .setHTML(`
+          <div style="font-size:0.72rem; text-transform:uppercase; color:#94a3b8; font-weight:700;">CP${p.service ? ' · ' + esc(p.service) : ''}</div>
+          <div style="font-size:1.05rem; font-weight:800; color:#fff;">Comboio ${esc(p.id)}</div>
+          ${rota ? `<div style="font-size:0.78rem; color:#cbd5e1;">${rota}</div>` : ''}
+          <div style="font-size:0.78rem;">${textoAtraso(Number(p.delayMin))}</div>
+        <button onclick="seguirComboio('cp','${esc(p.id)}',this)" style="margin-top:8px;width:100%;padding:5px 0;border:0;border-radius:6px;background:#38bdf8;color:#06080e;font-weight:700;cursor:pointer">Seguir</button>
+`).addTo(map);
+    }
+
+    function ligarCP(ativo) {
+      const v = ativo ? 'visible' : 'none';
+      ['cp-trains-halo', 'cp-trains-arrow', 'cp-trains-label']
+        .forEach(id => { if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', v); });
+
+      cancelAnimationFrame(CP.rafId);
+      clearInterval(CP.poll);
+
+      if (!ativo) return;
+      CP.dirty = true;
+      atualizarCP();
+      CP.poll = setInterval(atualizarCP, CP_POLL_MS);
+      CP.rafId = requestAnimationFrame(animarLoopCP);
+    }
+
+    async function atualizarCP() {
+      if (CP.busy || document.hidden) return;   // sem pedidos sobrepostos nem em separador escondido
+      CP.busy = true;
+      try {
+        const res = await fetch(`${API_BASE}/api/trains/cp`, { cache: 'no-store' });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.detail || `HTTP ${res.status}`);
+        }
+        const list = await res.json();
+        const now = performance.now();
+        const vistos = new Set();
+
+        for (const t of list) {
+          vistos.add(t.id);
+          let s = CP.trains.get(t.id);
+
+          if (!s) {
+            s = {
+              lon: t.lon, lat: t.lat, from: [t.lon, t.lat], to: [t.lon, t.lat],
+              t0: now, dur: CP_POLL_MS, lastChange: now, mudancas: 0,
+              bearing: t.heading ?? 0, alvoBearing: t.heading ?? 0,
+              feature: {
+                type: 'Feature',
+                geometry: { type: 'Point', coordinates: [t.lon, t.lat] },
+                properties: {}
+              }
+            };
+            CP.trains.set(t.id, s);
+            CP.dirty = true;
+          } else if (Math.abs(t.lon - s.to[0]) > 1e-6 || Math.abs(t.lat - s.to[1]) > 1e-6) {
+            // Só reage quando o comboio realmente se moveu (o feed repete leituras em cache)
+            const origem = [s.lon, s.lat];
+            const distKm = turf.distance(origem, [t.lon, t.lat], { units: 'kilometers' });
+
+            if (distKm > 5) {                       // salto absurdo: vai direto
+              s.lon = t.lon; s.lat = t.lat;
+              s.from = [t.lon, t.lat]; s.to = [t.lon, t.lat]; s.t0 = now;
+            } else {
+              const intervalo = now - s.lastChange;
+              // Duração do deslize = intervalo real entre atualizações (suavizado)
+              s.dur = s.mudancas === 0
+                ? Math.max(2000, Math.min(30000, intervalo))
+                : Math.max(2000, Math.min(30000, s.dur * 0.5 + intervalo * 0.5));
+              s.from = origem; s.to = [t.lon, t.lat]; s.t0 = now;
+              if (t.heading == null && distKm > 0.02) s.alvoBearing = turf.bearing(origem, s.to);
+            }
+            s.lastChange = now;
+            s.mudancas++;
+          }
+
+          if (t.heading != null) s.alvoBearing = t.heading;
+          const p = s.feature.properties;
+          p.id = String(t.id);
+          p.delayMin = t.delayMin || 0;
+          p.service = t.service || '';
+          p.origin = t.origin || '';
+          p.destination = t.destination || '';
+          p.bearing = s.bearing;
+        }
+
+        for (const id of [...CP.trains.keys()]) {
+          if (!vistos.has(id)) { CP.trains.delete(id); CP.dirty = true; }
+        }
+        if (CP.dirty) CP.features = [...CP.trains.values()].map(s => s.feature);
+        CP.error = null;
+      } catch (err) {
+        CP.error = err.message || String(err);
+        console.error("Erro no feed CP:", err);
+      } finally {
+        CP.busy = false;
+      }
+      atualizarEstadoPainel();
+    }
+
+    function animarLoopCP(ts) {
+      if (activeOperator !== 'cp') return;
+      CP.rafId = requestAnimationFrame(animarLoopCP);
+      if (ts - CP.last < FRAME_MS) return;
+      const dt = Math.min(0.25, (ts - CP.last) / 1000);
+      CP.last = ts;
+
+      const now = performance.now();
+      const kRot = 1 - Math.exp(-dt / 0.3);
+      let alterou = CP.dirty, alvoSeguir = null;
+
+      for (const s of CP.trains.values()) {
+        // Movimento linear: velocidade constante entre duas leituras (sem acelerar/travar a cada 4 s)
+        const f = Math.max(0, Math.min(1, (now - s.t0) / s.dur));
+        const lon = s.from[0] + (s.to[0] - s.from[0]) * f;
+        const lat = s.from[1] + (s.to[1] - s.from[1]) * f;
+        const bearing = suavizarAngulo(s.bearing, s.alvoBearing, kRot);
+        if (SEGUIR && SEGUIR.op === 'cp' && SEGUIR.id === s.feature.properties.id) alvoSeguir = [lon, lat];
+
+        if (lon !== s.lon || lat !== s.lat || Math.abs(bearing - s.bearing) > 0.05) {
+          s.lon = lon; s.lat = lat; s.bearing = bearing;
+          const c = s.feature.geometry.coordinates;
+          c[0] = lon; c[1] = lat;
+          s.feature.properties.bearing = bearing;
+          alterou = true;
+        }
+      }
+
+      if (alvoSeguir) map.setCenter(alvoSeguir);
+      if (alterou) {
+        CP.dirty = false;
+        const src = map.getSource('cp-trains');
+        if (src) src.setData({ type: 'FeatureCollection', features: CP.features });
+      }
+    }
+
+    // =====================================================================
+    // LISTA LATERAL DE COMBOIOS ATIVOS (atualiza 1x/s e só mexe no DOM se algo mudou)
+    // =====================================================================
+    const LISTA = { html: '', titulo: '', filtro: '' };
+
+    function construirLista() {
+      const q = LISTA.filtro;
+      const casa = txt => !q || txt.toLowerCase().includes(q);
+      let html = '', total = 0;
+
+      if (activeOperator === 'fertagus') {
+        const ps = FT.ultimas.map(f => f.properties)
+          .filter(p => casa(`${p.id} ${p.dest} ${p.next} ${p.status}`))
+          .sort((a, b) => (a.estac - b.estac) || (Number(a.id) - Number(b.id)));
+        total = ps.length;
+        html = ps.map(p => `
+          <div class="train-row${p.estac ? ' parked' : ''}" data-id="${esc(p.id)}">
+            <span class="tr-dot" style="background:${p.dir === 'sul' ? '#0ea5e9' : '#10b981'}"></span>
+            <span class="tr-id">${esc(p.id)}</span>
+            <div class="tr-main">
+              <div class="tr-route">→ ${esc(p.dest)}</div>
+              <div class="tr-sub">${esc(p.status)}</div>
+            </div>
+            ${p.estac || !p.eta ? '' : `<span class="tr-time"><small style="display:block;font-size:0.55rem;color:#64748b;font-weight:600">CHEGA</small>${esc(p.eta)}</span>`}
+          </div>`).join('');
+      } else {
+        const ps = [...CP.trains.values()].map(s => s.feature.properties)
+          .filter(p => casa(`${p.id} ${p.origin} ${p.destination} ${p.service}`))
+          .sort((a, b) => Number(a.id) - Number(b.id) || String(a.id).localeCompare(String(b.id)))
+          .slice(0, 400);
+        total = ps.length;
+        html = ps.map(p => {
+          const m = p.delayMin || 0;
+          const cor = m >= 6 ? '#ef4444' : m >= 1 ? '#f59e0b' : '#4ade80';
+          return `
+          <div class="train-row" data-id="${esc(p.id)}">
+            <span class="tr-dot" style="background:${cor}"></span>
+            <span class="tr-id">${esc(p.id)}</span>
+            <div class="tr-main">
+              <div class="tr-route">${p.origin && p.destination ? esc(p.origin) + ' → ' + esc(p.destination) : esc(p.service || 'Comboio')}</div>
+              <div class="tr-sub">${esc(p.service)}</div>
+            </div>
+            <span class="tr-badge" style="color:${cor}; background:${cor}22">${m >= 1 ? '+' + m + ' min' : '✓'}</span>
+          </div>`;
+        }).join('');
+      }
+
+      return { html: html || '<div class="tr-empty">Sem comboios de momento</div>', total };
+    }
+
+    function atualizarLista() {
+      if (document.hidden) return;
+      const { html, total } = construirLista();
+      const lista = document.getElementById('trainList');
+      if (LISTA.html !== html) { lista.innerHTML = html; LISTA.html = html; }
+      const titulo = `Ativos · ${total}`;
+      if (LISTA.titulo !== titulo) { document.getElementById('listaTitulo').textContent = titulo; LISTA.titulo = titulo; }
+    }
+
+    function focarComboio(id) {
+      if (activeOperator === 'fertagus') {
+        const f = FT.ultimas.find(x => x.properties.id === id);
+        if (!f) return;
+        map.flyTo({ center: f.geometry.coordinates, zoom: Math.max(map.getZoom(), 12), speed: 1.6 });
+        abrirPopupFertagus(f.properties, f.geometry.coordinates.slice());
+      } else {
+        const s = CP.trains.get(id);
+        if (!s) return;
+        map.flyTo({ center: [s.lon, s.lat], zoom: Math.max(map.getZoom(), 11), speed: 1.6 });
+        abrirPopupCP(s.feature.properties, [s.lon, s.lat]);
+      }
+    }
+
+    document.getElementById('trainList').addEventListener('click', (ev) => {
+      const row = ev.target.closest('.train-row');
+      if (row) focarComboio(row.dataset.id);
+    });
+    document.getElementById('filtroLista').addEventListener('input', (ev) => {
+      LISTA.filtro = ev.target.value.trim().toLowerCase();
+      atualizarLista();
+    });
+    setInterval(atualizarLista, 1000);
+
+    // Atualiza o texto só quando muda (antes escrevia no DOM a cada frame)
+    function atualizarEstadoPainel() {
+      const el = document.getElementById('liveStatus');
+      let html;
+      if (activeOperator === 'fertagus') {
+        html = FT.error
+          ? 'Sem ligação ao servidor'
+          : FT.ready
+            ? `<b>${Math.max(0, FT.count)}</b> em circulação${FT.parados ? ` · ${FT.parados} ${FT.parados === 1 ? 'parado' : 'parados'} no terminal` : ''}<br>Posição calculada pelo horário`
+            : 'A carregar horários…';
+      } else {
+        html = CP.error
+          ? 'Feed CP indisponível:<br>' + esc(CP.error)
+          : `<b>${CP.trains.size}</b> comboios CP com posição<br>Atualiza a cada ${CP_POLL_MS / 1000} s`;
+      }
+      if (el._html !== html) { el.innerHTML = html; el._html = html; }
+    }
+
+    function mostrarComboiosFertagus(visivel) {
+      const v = visivel ? 'visible' : 'none';
+      ['fertagus-track-line', 'fertagus-trains-halo', 'fertagus-trains-arrow', 'fertagus-trains-label']
+        .forEach(id => { if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', v); });
+    }
+
+    async function carregarEstacoes() {
+      try {
+        const res = await fetch(`${API_BASE}/api/stations?operator=${activeOperator}`);
+        const stations = await res.json();
+
+        const geojson = {
+          type: "FeatureCollection",
+          features: stations
+            .filter(s => s.lat && s.lon && !isNaN(s.lat) && !isNaN(s.lon))
+            .map(s => ({
+              type: "Feature",
+              geometry: {
+                type: "Point",
+                coordinates: [Number(s.lon), Number(s.lat)]
+              },
+              properties: { 
+                name: s.name,
+                code: s.code || "",
+                operator: activeOperator
+              }
+            }))
+        };
+
+        if (map.getSource('stations')) {
+          map.getSource('stations').setData(geojson);
+        }
+      } catch (err) {
+        console.error("Erro ao obter estações:", err);
+      }
+    }
+
+    function selecionarOperador(op) {
+      if (activeOperator === op) return;
+      activeOperator = op;
+
+      const btnFT = document.getElementById("btnFT");
+      const btnCP = document.getElementById("btnCP");
+
+      if (op === 'cp') {
+        btnCP.className = "btn-op active cp";
+        btnFT.className = "btn-op";
+      } else {
+        btnCP.className = "btn-op";
+        btnFT.className = "btn-op active fertagus";
+      }
+
+      if (op === 'fertagus') {
+        map.flyTo({ center: [-9.05, 38.66], zoom: 10, speed: 1.4 });
+      } else {
+        map.flyTo({ center: [-8.22, 39.55], zoom: 6.3, speed: 1.4 });
+      }
+
+      mostrarComboiosFertagus(op === 'fertagus');
+      ligarCP(op === 'cp');
+
+      if (op === 'fertagus') {
+        iniciarAnimacaoFertagus();
+      } else {
+        cancelAnimationFrame(FT.rafId);
+      }
+
+      SEGUIR = null;
+      atualizarEstadoPainel();
+      atualizarLista();
+      carregarEstacoes();
+    }
+
+    // Ao voltar ao separador, retoma as animações e vai buscar dados frescos
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) return;
+      if (activeOperator === 'cp') ligarCP(true); else iniciarAnimacaoFertagus();
+    });
+  </script>
+</body>
+</html>
