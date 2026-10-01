@@ -128,16 +128,18 @@
       100% { transform: scale(1.7); opacity: 0; }
     }
 
+    /* --- SIDEBAR RESPONSIVE (PC & MOBILE) --- */
     .sidebar-panel {
       position: absolute;
       top: 18px;
       left: 18px;
       z-index: 10;
-      width: 300px;
+      width: 310px;
+      max-height: calc(100vh - 36px);
       display: flex;
       flex-direction: column;
       gap: 12px;
-      background: rgba(14, 18, 27, 0.90);
+      background: rgba(14, 18, 27, 0.92);
       border: 1px solid rgba(255, 255, 255, 0.12);
       border-radius: 20px;
       padding: 16px;
@@ -195,9 +197,8 @@
     }
     .live-status b { color: #10b981; font-size: 0.85rem; }
 
-    .sidebar-panel { max-height: calc(100vh - 36px); }
-
-    .list-head { white-space: nowrap;
+    .list-head { 
+      white-space: nowrap;
       display: flex; align-items: center; justify-content: space-between; gap: 8px;
       font-family: 'JetBrains Mono', monospace; font-size: 0.68rem; font-weight: 700;
       letter-spacing: 0.12em; text-transform: uppercase; color: #94a3b8;
@@ -237,6 +238,26 @@
 
     .maplibregl-popup-tip {
       border-top-color: rgba(14, 20, 32, 0.95) !important;
+    }
+
+    /* --- ADAPTAÇÃO PARA TELEMÓVEIS (Ecrãs até 768px) --- */
+    @media (max-width: 768px) {
+      .sidebar-panel {
+        top: auto;
+        bottom: 12px;
+        left: 12px;
+        right: 12px;
+        width: auto;
+        max-height: 38vh;
+        padding: 12px;
+        border-radius: 16px;
+      }
+      .train-list {
+        max-height: 140px;
+      }
+      .brand-title {
+        font-size: 0.75rem;
+      }
     }
   </style>
   
@@ -286,7 +307,6 @@
       maxBoundsViscosity: 1.0
     });
 
-    // Só um cartão aberto de cada vez: fecha o anterior antes de abrir outro
     let popupAtual = null;
     function novoPopup(opcoes) {
       if (popupAtual) popupAtual.remove();
@@ -295,7 +315,6 @@
       return popupAtual;
     }
 
-    // Modo "seguir": a câmara acompanha um comboio até arrastares o mapa ou fechares o cartão
     let SEGUIR = null;
     function seguirComboio(op, id, btn) {
       const igual = SEGUIR && SEGUIR.op === op && SEGUIR.id === id;
@@ -304,7 +323,6 @@
     }
     map.on('dragstart', () => { SEGUIR = null; });
 
-    // Afasta cada sentido para o seu lado da via (efeito só visual, ~7 px) para os marcadores não se sobreporem
     function offsetMetros() {
       const z = map.getZoom();
       return z >= 11 ? 7 * 78271.5 * Math.cos(38.7 * Math.PI / 180) / Math.pow(2, z) : 0;
@@ -465,11 +483,10 @@
       esconderLoader();
     });
 
-
     // =====================================================================
     // RADAR FERTAGUS — DESLIZAMENTO SUAVE EM 60 FPS
     // =====================================================================
-    const FRAME_MS = 1000 / 30; // a 30 fps o movimento é sub-pixel por frame: igual a 60 fps a olho, com metade do custo
+    const FRAME_MS = 1000 / 30;
 
     const FT = {
       line: null, coords: null, cum: null, total: 0,
@@ -478,7 +495,6 @@
       baseEpochSeconds: 0, basePerf: 0
     };
 
-    // Tabela de distâncias acumuladas: posição por km sem chamar turf.along a cada frame
     function prepararLinhaFT(coords) {
       const cum = [0];
       for (let i = 1; i < coords.length; i++) {
@@ -505,7 +521,6 @@
       return (Math.atan2((b[0] - a[0]) * k, b[1] - a[1]) * 180 / Math.PI + 360) % 360;
     }
 
-    // Aproxima o ângulo atual do alvo pelo caminho mais curto (evita rotações bruscas)
     function suavizarAngulo(atual, alvo, k) {
       const d = ((alvo - atual + 540) % 360) - 180;
       return (atual + d * k + 360) % 360;
@@ -522,7 +537,6 @@
       FT.basePerf = performance.now();
     }
 
-    // Leitura contínua em alta resolução (com frações de segundo reais)
     function agoraLisboaFluido() {
       const elapsed = (performance.now() - FT.basePerf) / 1000;
       return (FT.baseEpochSeconds + elapsed) % 86400;
@@ -553,7 +567,7 @@
       map.addLayer({
         id: 'fertagus-track-line', type: 'line', source: 'fertagus-track',
         layout: { 'line-join': 'round', 'line-cap': 'round', visibility: 'none' },
-        paint: { 'line-color': '#10b981', 'line-width': 2.5, 'line-opacity': 0.0 }
+        paint: { 'line-color': '#10b981', 'line-width': 2.5, 'line-opacity': 0.55 }
       });
 
       criarIconeSeta();
@@ -612,7 +626,7 @@
     async function iniciarRadarFertagus() {
       adicionarCamadasFertagus();
       sincronizarRelogioLisboa();
-      setInterval(sincronizarRelogioLisboa, 60000); // re-sincronizar drift a cada minuto
+      setInterval(sincronizarRelogioLisboa, 60000);
 
       try {
         const [trackRes, schedRes] = await Promise.all([
@@ -649,19 +663,16 @@
       }
     }
 
-    // Janelas em que o comboio já aparece parado na estação de origem / ainda fica no terminal.
-    // Ajusta estes valores se quiseres que coincidam com o Live Tagus.
-    const FT_PRE_S = 10 * 60;   // antes da partida
-    const FT_POST_S = 5 * 60;   // depois da chegada
+    const FT_PRE_S = 10 * 60;
+    const FT_POST_S = 5 * 60;
 
     function estadoComboio(trip, now) {
       const stops = trip.stops, first = stops[0], last = stops[stops.length - 1];
 
-      for (const off of [-86400, 0, 86400]) {   // ±24h: viagens que cruzam a meia-noite
+      for (const off of [-86400, 0, 86400]) {
         const t = now + off;
         if (t < first.t - FT_PRE_S || t > last.t + FT_POST_S) continue;
 
-        // Estacionado na origem, antes de partir
         if (t < first.t) {
           const nx = stops[1];
           return {
@@ -671,7 +682,6 @@
           };
         }
 
-        // Já chegou ao terminal
         if (t >= last.t) {
           const pv = stops[stops.length - 2];
           return {
@@ -690,7 +700,7 @@
             return { km: a.km, dir, estac: false, status: `Parado em ${FT.stations[a.k].name}`, next: b, nextT: b.t };
           }
           const f = (t - (a.t + dwell)) / (b.t - (a.t + dwell));
-          const e = f * f * (3 - 2 * f); // Curva cúbica suave de aceleração e desaceleração
+          const e = f * f * (3 - 2 * f);
           return { km: a.km + (b.km - a.km) * e, dir, estac: false, status: `A caminho de ${FT.stations[b.k].name}`, next: b, nextT: b.t };
         }
       }
@@ -707,17 +717,13 @@
       const now = agoraLisboaFluido();
       const features = [];
       let emCirculacao = 0, alvoSeguir = null;
-      const offM = offsetMetros();
 
       for (const trip of FT.trips) {
         const s = estadoComboio(trip, now);
         if (!s) continue;
         if (!s.estac) emCirculacao++;
 
-        // Coordenada exata em cima do carril, sem desvio lateral
         const pos = posNaLinha(s.km);
-
-        // Rumo alinhado estritamente com a direção de marcha
         const alvo = rumoGraus(
           posNaLinha(s.km - 0.05 * s.dir), 
           posNaLinha(s.km + 0.05 * s.dir)
@@ -769,9 +775,8 @@
       }
     }
 
-
     // =====================================================================
-    // RADAR CP — movimento linear contínuo, com a duração real entre leituras
+    // RADAR CP
     // =====================================================================
     const CP = { trains: new Map(), features: [], dirty: true, error: null, rafId: null, poll: null, busy: false, last: 0 };
     const CP_POLL_MS = 4000;
@@ -786,7 +791,6 @@
     }
 
     function iniciarRadarCP() {
-      // buffer 0 e maxzoom 12: menos trabalho no worker a cada setData
       map.addSource('cp-trains', { type: 'geojson', buffer: 0, maxzoom: 12, data: { type: 'FeatureCollection', features: [] } });
       map.addLayer({
         id: 'cp-trains-halo', type: 'circle', source: 'cp-trains',
@@ -853,7 +857,7 @@
     }
 
     async function atualizarCP() {
-      if (CP.busy || document.hidden) return;   // sem pedidos sobrepostos nem em separador escondido
+      if (CP.busy || document.hidden) return;
       CP.busy = true;
       try {
         const res = await fetch(`${API_BASE}/api/trains/cp`, { cache: 'no-store' });
@@ -883,16 +887,14 @@
             CP.trains.set(t.id, s);
             CP.dirty = true;
           } else if (Math.abs(t.lon - s.to[0]) > 1e-6 || Math.abs(t.lat - s.to[1]) > 1e-6) {
-            // Só reage quando o comboio realmente se moveu (o feed repete leituras em cache)
             const origem = [s.lon, s.lat];
             const distKm = turf.distance(origem, [t.lon, t.lat], { units: 'kilometers' });
 
-            if (distKm > 5) {                       // salto absurdo: vai direto
+            if (distKm > 5) {
               s.lon = t.lon; s.lat = t.lat;
               s.from = [t.lon, t.lat]; s.to = [t.lon, t.lat]; s.t0 = now;
             } else {
               const intervalo = now - s.lastChange;
-              // Duração do deslize = intervalo real entre atualizações (suavizado)
               s.dur = s.mudancas === 0
                 ? Math.max(2000, Math.min(30000, intervalo))
                 : Math.max(2000, Math.min(30000, s.dur * 0.5 + intervalo * 0.5));
@@ -939,7 +941,6 @@
       let alterou = CP.dirty, alvoSeguir = null;
 
       for (const s of CP.trains.values()) {
-        // Movimento linear: velocidade constante entre duas leituras (sem acelerar/travar a cada 4 s)
         const f = Math.max(0, Math.min(1, (now - s.t0) / s.dur));
         const lon = s.from[0] + (s.to[0] - s.from[0]) * f;
         const lat = s.from[1] + (s.to[1] - s.from[1]) * f;
@@ -963,9 +964,6 @@
       }
     }
 
-    // =====================================================================
-    // LISTA LATERAL DE COMBOIOS ATIVOS (atualiza 1x/s e só mexe no DOM se algo mudou)
-    // =====================================================================
     const LISTA = { html: '', titulo: '', filtro: '' };
 
     function construirLista() {
@@ -1046,7 +1044,6 @@
     });
     setInterval(atualizarLista, 1000);
 
-    // Atualiza o texto só quando muda (antes escrevia no DOM a cada frame)
     function atualizarEstadoPainel() {
       const el = document.getElementById('liveStatus');
       let html;
@@ -1054,7 +1051,7 @@
         html = FT.error
           ? 'Sem ligação ao servidor'
           : FT.ready
-            ? `<b>${Math.max(0, FT.count)}</b> em circulação${FT.parados ? ` · ${FT.parados} ${FT.parados === 1 ? 'parado' : 'parados'} no terminal` : ''}<br>Posição calculada pelo horário`
+            ? `<b>${Math.max(0, FT.count)}</b> em circulação${FT.parados ? ` · ${FT.parados}${FT.parados === 1 ? 'parado' : 'parados'} no terminal` : ''}<br>Posição calculada pelo horário`
             : 'A carregar horários…';
       } else {
         html = CP.error
@@ -1137,7 +1134,6 @@
       carregarEstacoes();
     }
 
-    // Ao voltar ao separador, retoma as animações e vai buscar dados frescos
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) return;
       if (activeOperator === 'cp') ligarCP(true); else iniciarAnimacaoFertagus();
