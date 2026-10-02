@@ -128,18 +128,16 @@
       100% { transform: scale(1.7); opacity: 0; }
     }
 
-    /* --- SIDEBAR RESPONSIVE (PC & MOBILE) --- */
     .sidebar-panel {
       position: absolute;
       top: 18px;
       left: 18px;
       z-index: 10;
-      width: 310px;
-      max-height: calc(100vh - 36px);
+      width: 300px;
       display: flex;
       flex-direction: column;
       gap: 12px;
-      background: rgba(14, 18, 27, 0.92);
+      background: rgba(14, 18, 27, 0.90);
       border: 1px solid rgba(255, 255, 255, 0.12);
       border-radius: 20px;
       padding: 16px;
@@ -197,14 +195,31 @@
     }
     .live-status b { color: #10b981; font-size: 0.85rem; }
 
-    .list-head { 
-      white-space: nowrap;
+    .sidebar-panel { max-height: calc(100vh - 36px); }
+    .brand-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .btn-collapse {
+      width: 28px; height: 28px; flex: none; border-radius: 8px; cursor: pointer; font-size: 1rem; line-height: 1;
+      background: transparent; border: 1px solid rgba(255, 255, 255, 0.15); color: #cbd5e1;
+    }
+    .btn-collapse:hover { background: rgba(255, 255, 255, 0.08); }
+    .sidebar-panel.collapsed .live-status,
+    .sidebar-panel.collapsed .list-head,
+    .sidebar-panel.collapsed .train-list { display: none; }
+    .list-head select {
+      background: rgba(0, 0, 0, 0.45); border: 1px solid rgba(255, 255, 255, 0.1); color: #f8fafc;
+      border-radius: 8px; font-size: 0.72rem; padding: 4px 4px; outline: none;
+    }
+    @media (max-width: 640px) {
+      .sidebar-panel { width: calc(100vw - 24px); left: 12px; top: 12px; max-height: 60vh; }
+    }
+
+    .list-head { white-space: nowrap;
       display: flex; align-items: center; justify-content: space-between; gap: 8px;
       font-family: 'JetBrains Mono', monospace; font-size: 0.68rem; font-weight: 700;
       letter-spacing: 0.12em; text-transform: uppercase; color: #94a3b8;
     }
     .list-head input {
-      width: 110px; background: rgba(0, 0, 0, 0.45); border: 1px solid rgba(255, 255, 255, 0.1);
+      width: 84px; background: rgba(0, 0, 0, 0.45); border: 1px solid rgba(255, 255, 255, 0.1);
       border-radius: 8px; color: #f8fafc; font-size: 0.72rem; padding: 5px 8px; outline: none;
       font-family: 'Plus Jakarta Sans', sans-serif; letter-spacing: 0; text-transform: none;
     }
@@ -239,26 +254,6 @@
     .maplibregl-popup-tip {
       border-top-color: rgba(14, 20, 32, 0.95) !important;
     }
-
-    /* --- ADAPTAÇÃO PARA TELEMÓVEIS (Ecrãs até 768px) --- */
-    @media (max-width: 768px) {
-      .sidebar-panel {
-        top: auto;
-        bottom: 12px;
-        left: 12px;
-        right: 12px;
-        width: auto;
-        max-height: 38vh;
-        padding: 12px;
-        border-radius: 16px;
-      }
-      .train-list {
-        max-height: 140px;
-      }
-      .brand-title {
-        font-size: 0.75rem;
-      }
-    }
   </style>
   
   <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
@@ -276,7 +271,10 @@
   </div>
 
   <aside class="sidebar-panel">
-    <div class="brand-title">COMBOIOS DE PORTUGAL</div>
+    <div class="brand-row">
+      <div class="brand-title">COMBOIOS DE PORTUGAL</div>
+      <button class="btn-collapse" id="btnRecolher" aria-label="Recolher ou expandir painel" title="Recolher / expandir">–</button>
+    </div>
     <div class="operator-toggle">
       <button class="btn-op active cp" id="btnCP" onclick="selecionarOperador('cp')">CP</button>
       <button class="btn-op" id="btnFT" onclick="selecionarOperador('fertagus')">FERTAGUS</button>
@@ -284,6 +282,7 @@
     <div class="live-status" id="liveStatus"></div>
     <div class="list-head">
       <span id="listaTitulo">Ativos</span>
+      <select id="ordemLista" aria-label="Ordenar lista"><option value="num">Nº</option><option value="estado">Estado</option></select>
       <input id="filtroLista" type="search" placeholder="Filtrar…" autocomplete="off">
     </div>
     <div class="train-list" id="trainList"></div>
@@ -294,28 +293,36 @@
   <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 
   <script>
-    const API_BASE = window.location.origin;
+    const API_BASE = location.protocol === 'file:' ? 'http://localhost:5000' : '';
     let activeOperator = "cp";
 
-    const map = new maplibregl.Map({
-      container: 'map',
-      style: 'https://tiles.openfreemap.org/styles/dark',
-      center: [-8.22, 39.55],
-      zoom: 6.3,
-      minZoom: 5.5,
-      maxZoom: 12,
-      maxBoundsViscosity: 1.0
-    });
+    const PT_BOUNDS = [[-9.8, 36.8], [-6.0, 42.3]];   // Portugal continental
 
+	// deixa espaço para o painel lateral em ecrãs grandes
+	const paddingPT = () => ({ top: 30, bottom: 30, right: 30, left: window.innerWidth > 640 ? 340 : 30 });
+
+	const map = new maplibregl.Map({
+	  container: 'map',
+	  style: 'https://tiles.openfreemap.org/styles/dark',
+	  bounds: PT_BOUNDS,
+	  fitBoundsOptions: { padding: paddingPT() },
+	  minZoom: 5,
+	  maxZoom: 12,
+	  maxBounds: [[-22, 33], [4, 47]]   // só impede de ir longe de mais; largo o suficiente para ecrãs panorâmicos
+	});
+
+    // Só um cartão aberto de cada vez: fecha o anterior antes de abrir outro
     let popupAtual = null;
     function novoPopup(opcoes) {
       if (popupAtual) popupAtual.remove();
       popupAtual = new maplibregl.Popup(opcoes);
-      popupAtual.on('close', () => { SEGUIR = null; });
+      popupAtual.on('close', () => { SEGUIR = null; SELECIONADO = null; limparRota(); });
       return popupAtual;
     }
 
+    // Modo "seguir": a câmara acompanha um comboio até arrastares o mapa ou fechares o cartão
     let SEGUIR = null;
+    let SELECIONADO = null;   // comboio Fertagus com o cartão aberto (desenha o resto da rota)
     function seguirComboio(op, id, btn) {
       const igual = SEGUIR && SEGUIR.op === op && SEGUIR.id === id;
       SEGUIR = igual ? null : { op, id };
@@ -323,6 +330,7 @@
     }
     map.on('dragstart', () => { SEGUIR = null; });
 
+    // Afasta cada sentido para o seu lado da via (efeito só visual, ~7 px) para os marcadores não se sobreporem
     function offsetMetros() {
       const z = map.getZoom();
       return z >= 11 ? 7 * 78271.5 * Math.cos(38.7 * Math.PI / 180) / Math.pow(2, z) : 0;
@@ -469,8 +477,8 @@
           .setLngLat(coords)
           .setHTML(`
             <div style="font-size:0.72rem; text-transform:uppercase; color:#94a3b8; font-weight:700;">Estação</div>
-            <div style="font-size:1.05rem; font-weight:800; color:#fff;">${name}</div>
-            <div style="font-size:0.7rem; color:#64748b; font-family:'JetBrains Mono',monospace;">ID: ${code}</div>
+            <div style="font-size:1.05rem; font-weight:800; color:#fff;">${esc(name)}</div>
+            <div style="font-size:0.7rem; color:#64748b; font-family:'JetBrains Mono',monospace;">ID: ${esc(code)}</div>
           `)
           .addTo(map);
       });
@@ -483,10 +491,11 @@
       esconderLoader();
     });
 
+
     // =====================================================================
     // RADAR FERTAGUS — DESLIZAMENTO SUAVE EM 60 FPS
     // =====================================================================
-    const FRAME_MS = 1000 / 30;
+    const FRAME_MS = 1000 / 30; // a 30 fps o movimento é sub-pixel por frame: igual a 60 fps a olho, com metade do custo
 
     const FT = {
       line: null, coords: null, cum: null, total: 0,
@@ -495,6 +504,7 @@
       baseEpochSeconds: 0, basePerf: 0
     };
 
+    // Tabela de distâncias acumuladas: posição por km sem chamar turf.along a cada frame
     function prepararLinhaFT(coords) {
       const cum = [0];
       for (let i = 1; i < coords.length; i++) {
@@ -521,6 +531,7 @@
       return (Math.atan2((b[0] - a[0]) * k, b[1] - a[1]) * 180 / Math.PI + 360) % 360;
     }
 
+    // Aproxima o ângulo atual do alvo pelo caminho mais curto (evita rotações bruscas)
     function suavizarAngulo(atual, alvo, k) {
       const d = ((alvo - atual + 540) % 360) - 180;
       return (atual + d * k + 360) % 360;
@@ -537,6 +548,7 @@
       FT.basePerf = performance.now();
     }
 
+    // Leitura contínua em alta resolução (com frações de segundo reais)
     function agoraLisboaFluido() {
       const elapsed = (performance.now() - FT.basePerf) / 1000;
       return (FT.baseEpochSeconds + elapsed) % 86400;
@@ -608,6 +620,67 @@
       });
     }
 
+    function adicionarCamadasRota() {
+      const vazio = { type: 'FeatureCollection', features: [] };
+      map.addSource('rota-linha', { type: 'geojson', data: vazio });
+      map.addSource('rota-paragens', { type: 'geojson', data: vazio });
+      const antes = 'fertagus-trains-halo';
+      map.addLayer({
+        id: 'rota-linha', type: 'line', source: 'rota-linha',
+        layout: { 'line-join': 'round', 'line-cap': 'round' },
+        paint: { 'line-color': '#fb923c', 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 2.5, 14, 5], 'line-opacity': 0.95 }
+      }, antes);
+      map.addLayer({
+        id: 'rota-paragens-circulo', type: 'circle', source: 'rota-paragens',
+        paint: { 'circle-radius': 5, 'circle-color': '#fb923c', 'circle-stroke-width': 2, 'circle-stroke-color': '#06080e' }
+      }, antes);
+      map.addLayer({
+        id: 'rota-paragens-label', type: 'symbol', source: 'rota-paragens',
+        layout: { 'text-field': ['get', 'label'], 'text-size': 11, 'text-offset': [0, 1.1], 'text-anchor': 'top', 'text-allow-overlap': true },
+        paint: { 'text-color': '#fdba74', 'text-halo-color': '#090d16', 'text-halo-width': 2 }
+      });
+    }
+
+    // Percurso ao longo do traçado entre dois km, no sentido da marcha (começa no próprio comboio)
+    function coordsRota(kmDe, kmAte) {
+      const { coords, cum } = FT;
+      const out = [posNaLinha(kmDe)];
+      if (kmAte >= kmDe) { for (let i = 0; i < cum.length; i++) if (cum[i] > kmDe && cum[i] < kmAte) out.push(coords[i]); }
+      else { for (let i = cum.length - 1; i >= 0; i--) if (cum[i] < kmDe && cum[i] > kmAte) out.push(coords[i]); }
+      out.push(posNaLinha(kmAte));
+      return out;
+    }
+
+    function limparRota() {
+      const l = map.getSource('rota-linha'), p = map.getSource('rota-paragens');
+      if (!l || !p) return;
+      const vazio = { type: 'FeatureCollection', features: [] };
+      l.setData(vazio); p.setData(vazio);
+      FT.rotaAtiva = false; FT.rotaChave = null;
+      CP.rotaStops = null; CP.rotaPath = null; CP.rotaAt = null; CP.rotaChave = null;
+    }
+
+    function atualizarRota(trip, s) {
+      const l = map.getSource('rota-linha'), p = map.getSource('rota-paragens');
+      if (!l || !p) return;
+      if (!trip || !s || !s.next) { if (FT.rotaAtiva) limparRota(); return; }
+      const stops = trip.stops, idx = stops.indexOf(s.next);
+      l.setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: coordsRota(s.km, stops[stops.length - 1].km) } });
+      const chave = trip.id + ':' + idx;   // as paragens só mudam quando o comboio passa uma estação
+      if (FT.rotaChave !== chave) {
+        FT.rotaChave = chave;
+        p.setData({
+          type: 'FeatureCollection',
+          features: stops.slice(idx).map(x => ({
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: posNaLinha(x.km) },
+            properties: { label: `${FT.stations[x.k].name} ${fmtHora(x.t)}` }
+          }))
+        });
+      }
+      FT.rotaAtiva = true;
+    }
+
     function abrirPopupFertagus(p, coords) {
       const occ = p.ocupacao !== undefined && p.ocupacao !== 'null' && p.ocupacao !== '' ? `${Math.round(Number(p.ocupacao))}%` : '—';
       novoPopup({ offset: 14 })
@@ -621,13 +694,18 @@
           <div style="font-size:0.7rem; color:#64748b; font-family:'JetBrains Mono',monospace;">${p.carruagens || '?'} carruagens · ocupação ${occ}</div>
         <button onclick="seguirComboio('fertagus','${esc(p.id)}',this)" style="margin-top:8px;width:100%;padding:5px 0;border:0;border-radius:6px;background:#38bdf8;color:#06080e;font-weight:700;cursor:pointer">Seguir</button>
 `).addTo(map);
+      SELECIONADO = { op: 'fertagus', id: String(p.id) };
     }
 
     async function iniciarRadarFertagus() {
       adicionarCamadasFertagus();
+      adicionarCamadasRota();
       sincronizarRelogioLisboa();
-      setInterval(sincronizarRelogioLisboa, 60000);
+      setInterval(sincronizarRelogioLisboa, 60000); // re-sincronizar drift a cada minuto
+      carregarDadosFertagus();
+    }
 
+    async function carregarDadosFertagus() {
       try {
         const [trackRes, schedRes] = await Promise.all([
           fetch(`${API_BASE}/api/tracks/fertagus`),
@@ -654,25 +732,30 @@
         FT.trips.forEach(t => { t.destName = FT.stations[t.stops[t.stops.length - 1].k].name; });
 
         FT.ready = true;
+        FT.error = false;
         iniciarAnimacaoFertagus();
         atualizarEstadoPainel();
       } catch (err) {
         console.error("Erro ao iniciar radar Fertagus:", err);
         FT.error = true;
         atualizarEstadoPainel();
+        setTimeout(carregarDadosFertagus, 10000);   // tenta de novo
       }
     }
 
-    const FT_PRE_S = 10 * 60;
-    const FT_POST_S = 5 * 60;
+    // Janelas em que o comboio já aparece parado na estação de origem / ainda fica no terminal.
+    // Ajusta estes valores se quiseres que coincidam com o Live Tagus.
+    const FT_PRE_S = 10 * 60;   // antes da partida
+    const FT_POST_S = 5 * 60;   // depois da chegada
 
     function estadoComboio(trip, now) {
       const stops = trip.stops, first = stops[0], last = stops[stops.length - 1];
 
-      for (const off of [-86400, 0, 86400]) {
+      for (const off of [-86400, 0, 86400]) {   // ±24h: viagens que cruzam a meia-noite
         const t = now + off;
         if (t < first.t - FT_PRE_S || t > last.t + FT_POST_S) continue;
 
+        // Estacionado na origem, antes de partir
         if (t < first.t) {
           const nx = stops[1];
           return {
@@ -682,6 +765,7 @@
           };
         }
 
+        // Já chegou ao terminal
         if (t >= last.t) {
           const pv = stops[stops.length - 2];
           return {
@@ -700,7 +784,7 @@
             return { km: a.km, dir, estac: false, status: `Parado em ${FT.stations[a.k].name}`, next: b, nextT: b.t };
           }
           const f = (t - (a.t + dwell)) / (b.t - (a.t + dwell));
-          const e = f * f * (3 - 2 * f);
+          const e = f * f * (3 - 2 * f); // Curva cúbica suave de aceleração e desaceleração
           return { km: a.km + (b.km - a.km) * e, dir, estac: false, status: `A caminho de ${FT.stations[b.k].name}`, next: b, nextT: b.t };
         }
       }
@@ -716,25 +800,22 @@
 
       const now = agoraLisboaFluido();
       const features = [];
-      let emCirculacao = 0, alvoSeguir = null;
+      let emCirculacao = 0, alvoSeguir = null, selTrip = null, selS = null;
+      const offM = offsetMetros();
 
       for (const trip of FT.trips) {
         const s = estadoComboio(trip, now);
         if (!s) continue;
         if (!s.estac) emCirculacao++;
+        if (SELECIONADO && SELECIONADO.op === 'fertagus' && SELECIONADO.id === String(trip.id)) { selTrip = trip; selS = s; }
 
-        const pos = posNaLinha(s.km);
-        const alvo = rumoGraus(
-          posNaLinha(s.km - 0.05 * s.dir), 
-          posNaLinha(s.km + 0.05 * s.dir)
-        );
+        let pos = posNaLinha(s.km);
+        const alvo = rumoGraus(posNaLinha(s.km - 0.05 * s.dir), posNaLinha(s.km + 0.05 * s.dir));
         const prev = FT.angles.get(trip.id);
         const bearing = prev === undefined ? alvo : suavizarAngulo(prev, alvo, 1 - Math.exp(-dt / 0.25));
         FT.angles.set(trip.id, bearing);
-
-        if (SEGUIR && SEGUIR.op === 'fertagus' && SEGUIR.id === String(trip.id)) {
-          alvoSeguir = pos;
-        }
+        pos = deslocarLateral(pos, bearing, offM);
+        if (SEGUIR && SEGUIR.op === 'fertagus' && SEGUIR.id === String(trip.id)) alvoSeguir = pos;
 
         features.push({
           type: 'Feature',
@@ -754,6 +835,7 @@
         });
       }
 
+      if ((SELECIONADO && SELECIONADO.op === 'fertagus') || FT.rotaAtiva) atualizarRota(selTrip, selS);
       if (alvoSeguir) map.setCenter(alvoSeguir);
       FT.ultimas = features;
       const src = map.getSource('fertagus-trains');
@@ -775,11 +857,104 @@
       }
     }
 
+
     // =====================================================================
-    // RADAR CP
+    // RADAR CP — movimento linear contínuo, com a duração real entre leituras
     // =====================================================================
     const CP = { trains: new Map(), features: [], dirty: true, error: null, rafId: null, poll: null, busy: false, last: 0 };
     const CP_POLL_MS = 4000;
+
+    function normNome(t) {
+      return String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    }
+
+    function hhmm(t) {
+      const m = /(\d{1,2}:\d{2})/.exec(String(t || ''));
+      return m ? m[1] : '';
+    }
+
+    // Rumo inicial (antes de o comboio se mexer): heading do feed ou direção ao destino
+    function rumoInicial(s, t) {
+      if (t.heading) { s.alvoBearing = s.bearing = t.heading; s.sabeRumo = true; return; }
+      const d = CP.estacoes && CP.estacoes.get(normNome(t.destination));
+      if (d) { s.alvoBearing = s.bearing = turf.bearing([s.lon, s.lat], d); s.sabeRumo = true; }
+    }
+
+    // Rota restante do comboio CP: linha laranja a partir dele pelas paragens que faltam
+    // Rota seguindo a via (caminho calculado no servidor a partir do OpenStreetMap)
+    function atualizarRotaCaminho(s, l, p) {
+      const agora = performance.now();
+      if (agora - (CP.rotaT || 0) < 250) return;
+      CP.rotaT = agora;
+      const path = CP.rotaPath, k = Math.cos(s.lat * Math.PI / 180);
+      const procurar = (lo, hi) => {
+        let b = lo, bd = Infinity;
+        for (let i = lo; i <= hi; i++) {
+          const dx = (path[i][0] - s.lon) * k, dy = path[i][1] - s.lat, d = dx * dx + dy * dy;
+          if (d < bd) { bd = d; b = i; }
+        }
+        return [b, bd];
+      };
+      const h = CP.rotaIdx;
+      let [j, bd] = h == null ? procurar(0, path.length - 1) : procurar(Math.max(0, h - 300), Math.min(path.length - 1, h + 300));
+      if (bd > 4e-4 && h != null) [j, bd] = procurar(0, path.length - 1);
+      if (j < path.length - 1) {   // já passou este vértice?
+        const a = path[j], b = path[j + 1];
+        if ((b[0] - a[0]) * k * (s.lon - a[0]) * k + (b[1] - a[1]) * (s.lat - a[1]) > 0) j++;
+      }
+      CP.rotaIdx = j;
+      l.setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: [[s.lon, s.lat], ...path.slice(j)] } });
+
+      const st = CP.rotaStops, at = CP.rotaAt;
+      // paragem ainda por chegar: à frente do vértice atual, ou no vértice atual se o comboio ainda não estiver na estação
+      const rest = st.filter((x, i) => {
+        if (at[i] > j) return true;
+        if (at[i] < j) return false;
+        const dx = (path[j][0] - s.lon) * k, dy = path[j][1] - s.lat;
+        return dx * dx + dy * dy > 1e-6;
+      });
+      const chave = SELECIONADO.id + ':' + rest.length;
+      if (CP.rotaChave !== chave) {
+        CP.rotaChave = chave;
+        p.setData({
+          type: 'FeatureCollection',
+          features: rest.map(x => ({
+            type: 'Feature', geometry: { type: 'Point', coordinates: [x.lon, x.lat] },
+            properties: { label: `${x.name} ${hhmm(x.time)}`.trim() }
+          }))
+        });
+      }
+    }
+
+    function atualizarRotaCP(s) {
+      const st = CP.rotaStops;
+      const l = map.getSource('rota-linha'), p = map.getSource('rota-paragens');
+      if (!st || st.length < 2 || !l || !p) return;
+      if (CP.rotaPath && CP.rotaPath.length > 1 && CP.rotaAt) { atualizarRotaCaminho(s, l, p); return; }
+      const k = Math.cos(s.lat * Math.PI / 180);
+      let melhor = 0, dMin = Infinity, tMelhor = 0;
+      for (let i = 0; i < st.length - 1; i++) {   // segmento mais próximo do comboio
+        const ax = st[i].lon * k, ay = st[i].lat, bx = st[i + 1].lon * k, by = st[i + 1].lat;
+        const dx = bx - ax, dy = by - ay, px = s.lon * k - ax, py = s.lat - ay;
+        const t = Math.max(0, Math.min(1, (px * dx + py * dy) / (dx * dx + dy * dy || 1)));
+        const d = Math.hypot(px - t * dx, py - t * dy);
+        if (d < dMin) { dMin = d; melhor = i; tMelhor = t; }
+      }
+      const idx = (melhor === 0 && tMelhor === 0) ? 0 : melhor + 1;
+      const restantes = st.slice(idx);
+      l.setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: [[s.lon, s.lat], ...restantes.map(x => [x.lon, x.lat])] } });
+      const chave = SELECIONADO.id + ':' + idx;
+      if (CP.rotaChave !== chave) {
+        CP.rotaChave = chave;
+        p.setData({
+          type: 'FeatureCollection',
+          features: restantes.map(x => ({
+            type: 'Feature', geometry: { type: 'Point', coordinates: [x.lon, x.lat] },
+            properties: { label: `${x.name} ${hhmm(x.time)}`.trim() }
+          }))
+        });
+      }
+    }
 
     function esc(t) {
       return String(t ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -791,6 +966,7 @@
     }
 
     function iniciarRadarCP() {
+      // buffer 0 e maxzoom 12: menos trabalho no worker a cada setData
       map.addSource('cp-trains', { type: 'geojson', buffer: 0, maxzoom: 12, data: { type: 'FeatureCollection', features: [] } });
       map.addLayer({
         id: 'cp-trains-halo', type: 'circle', source: 'cp-trains',
@@ -802,6 +978,7 @@
       });
       map.addLayer({
         id: 'cp-trains-arrow', type: 'symbol', source: 'cp-trains',
+        paint: { 'icon-opacity': ['case', ['==', ['get', 'rumo'], 1], 1, 0] },   // sem rumo conhecido, não mostra seta a apontar para cima
         layout: {
           'icon-image': 'train-arrow',
           'icon-size': ['interpolate', ['linear'], ['zoom'], 6, 0.3, 10, 0.45, 14, 0.6],
@@ -839,6 +1016,17 @@
           <div style="font-size:0.78rem;">${textoAtraso(Number(p.delayMin))}</div>
         <button onclick="seguirComboio('cp','${esc(p.id)}',this)" style="margin-top:8px;width:100%;padding:5px 0;border:0;border-radius:6px;background:#38bdf8;color:#06080e;font-weight:700;cursor:pointer">Seguir</button>
 `).addTo(map);
+      const id = String(p.id);
+      SELECIONADO = { op: 'cp', id };
+      CP.rotaStops = null; CP.rotaPath = null; CP.rotaAt = null; CP.rotaChave = null;
+      fetch(`${API_BASE}/api/trains/cp/${encodeURIComponent(id)}/stops`)
+        .then(r => r.ok ? r.json() : null)
+        .then(d => {
+          if (d && SELECIONADO && SELECIONADO.op === 'cp' && SELECIONADO.id === id) {
+            CP.rotaStops = d.stops; CP.rotaPath = d.path; CP.rotaAt = d.stopAt; CP.rotaIdx = null;
+          }
+        })
+        .catch(() => {});
     }
 
     function ligarCP(ativo) {
@@ -857,7 +1045,7 @@
     }
 
     async function atualizarCP() {
-      if (CP.busy || document.hidden) return;
+      if (CP.busy || document.hidden) return;   // sem pedidos sobrepostos nem em separador escondido
       CP.busy = true;
       try {
         const res = await fetch(`${API_BASE}/api/trains/cp`, { cache: 'no-store' });
@@ -876,7 +1064,7 @@
           if (!s) {
             s = {
               lon: t.lon, lat: t.lat, from: [t.lon, t.lat], to: [t.lon, t.lat],
-              t0: now, dur: CP_POLL_MS, lastChange: now, mudancas: 0,
+              t0: now, dur: CP_POLL_MS, lastChange: now, mudancas: 0, sabeRumo: false, temMov: false,
               bearing: t.heading ?? 0, alvoBearing: t.heading ?? 0,
               feature: {
                 type: 'Feature',
@@ -887,25 +1075,31 @@
             CP.trains.set(t.id, s);
             CP.dirty = true;
           } else if (Math.abs(t.lon - s.to[0]) > 1e-6 || Math.abs(t.lat - s.to[1]) > 1e-6) {
+            // Só reage quando o comboio realmente se moveu (o feed repete leituras em cache)
             const origem = [s.lon, s.lat];
             const distKm = turf.distance(origem, [t.lon, t.lat], { units: 'kilometers' });
 
-            if (distKm > 5) {
+            if (distKm > 5) {                       // salto absurdo: vai direto
               s.lon = t.lon; s.lat = t.lat;
               s.from = [t.lon, t.lat]; s.to = [t.lon, t.lat]; s.t0 = now;
             } else {
               const intervalo = now - s.lastChange;
+              // Duração do deslize = intervalo real entre atualizações (suavizado)
               s.dur = s.mudancas === 0
                 ? Math.max(2000, Math.min(30000, intervalo))
                 : Math.max(2000, Math.min(30000, s.dur * 0.5 + intervalo * 0.5));
               s.from = origem; s.to = [t.lon, t.lat]; s.t0 = now;
-              if (t.heading == null && distKm > 0.02) s.alvoBearing = turf.bearing(origem, s.to);
+              if (t.heading == null && distKm > 0.02) { s.alvoBearing = turf.bearing(origem, s.to); s.sabeRumo = true; s.temMov = true; }
             }
             s.lastChange = now;
             s.mudancas++;
           }
 
-          if (t.heading != null) s.alvoBearing = t.heading;
+          if (t.heading != null) {          // rumo do servidor (segue a direção da linha)
+            s.alvoBearing = t.heading;
+            if (!s.sabeRumo) s.bearing = t.heading;
+            s.sabeRumo = true;
+          } else if (!s.sabeRumo) rumoInicial(s, t);
           const p = s.feature.properties;
           p.id = String(t.id);
           p.delayMin = t.delayMin || 0;
@@ -913,6 +1107,8 @@
           p.origin = t.origin || '';
           p.destination = t.destination || '';
           p.bearing = s.bearing;
+          const rumo = s.sabeRumo ? 1 : 0;
+          if (p.rumo !== rumo) { p.rumo = rumo; CP.dirty = true; }
         }
 
         for (const id of [...CP.trains.keys()]) {
@@ -941,6 +1137,7 @@
       let alterou = CP.dirty, alvoSeguir = null;
 
       for (const s of CP.trains.values()) {
+        // Movimento linear: velocidade constante entre duas leituras (sem acelerar/travar a cada 4 s)
         const f = Math.max(0, Math.min(1, (now - s.t0) / s.dur));
         const lon = s.from[0] + (s.to[0] - s.from[0]) * f;
         const lat = s.from[1] + (s.to[1] - s.from[1]) * f;
@@ -956,6 +1153,10 @@
         }
       }
 
+      if (SELECIONADO && SELECIONADO.op === 'cp') {
+        const sel = CP.trains.get(SELECIONADO.id);
+        if (sel) atualizarRotaCP(sel); else { SELECIONADO = null; limparRota(); }
+      }
       if (alvoSeguir) map.setCenter(alvoSeguir);
       if (alterou) {
         CP.dirty = false;
@@ -964,7 +1165,10 @@
       }
     }
 
-    const LISTA = { html: '', titulo: '', filtro: '' };
+    // =====================================================================
+    // LISTA LATERAL DE COMBOIOS ATIVOS (atualiza 1x/s e só mexe no DOM se algo mudou)
+    // =====================================================================
+    const LISTA = { html: '', titulo: '', filtro: '', ordem: 'num' };
 
     function construirLista() {
       const q = LISTA.filtro;
@@ -974,7 +1178,9 @@
       if (activeOperator === 'fertagus') {
         const ps = FT.ultimas.map(f => f.properties)
           .filter(p => casa(`${p.id} ${p.dest} ${p.next} ${p.status}`))
-          .sort((a, b) => (a.estac - b.estac) || (Number(a.id) - Number(b.id)));
+          .sort((a, b) => (a.estac - b.estac)
+            || (LISTA.ordem === 'estado' ? String(a.eta).localeCompare(String(b.eta)) : 0)
+            || (Number(a.id) - Number(b.id)));
         total = ps.length;
         html = ps.map(p => `
           <div class="train-row${p.estac ? ' parked' : ''}" data-id="${esc(p.id)}">
@@ -989,7 +1195,8 @@
       } else {
         const ps = [...CP.trains.values()].map(s => s.feature.properties)
           .filter(p => casa(`${p.id} ${p.origin} ${p.destination} ${p.service}`))
-          .sort((a, b) => Number(a.id) - Number(b.id) || String(a.id).localeCompare(String(b.id)))
+          .sort((a, b) => (LISTA.ordem === 'estado' ? (b.delayMin || 0) - (a.delayMin || 0) : 0)
+            || Number(a.id) - Number(b.id) || String(a.id).localeCompare(String(b.id)))
           .slice(0, 400);
         total = ps.length;
         html = ps.map(p => {
@@ -1012,7 +1219,7 @@
     }
 
     function atualizarLista() {
-      if (document.hidden) return;
+      if (document.hidden || painel.classList.contains('collapsed')) return;
       const { html, total } = construirLista();
       const lista = document.getElementById('trainList');
       if (LISTA.html !== html) { lista.innerHTML = html; LISTA.html = html; }
@@ -1042,8 +1249,27 @@
       LISTA.filtro = ev.target.value.trim().toLowerCase();
       atualizarLista();
     });
+    document.getElementById('ordemLista').addEventListener('change', (ev) => {
+      LISTA.ordem = ev.target.value;
+      atualizarLista();
+    });
+
+    // Painel recolhível (começa recolhido em ecrãs pequenos)
+    const painel = document.querySelector('.sidebar-panel');
+    const btnRecolher = document.getElementById('btnRecolher');
+    function definirRecolhido(r) {
+      painel.classList.toggle('collapsed', r);
+      btnRecolher.textContent = r ? '+' : '–';
+      if (!r) atualizarLista();
+    }
+    btnRecolher.addEventListener('click', () => definirRecolhido(!painel.classList.contains('collapsed')));
+    if (window.matchMedia('(max-width: 640px)').matches) definirRecolhido(true);
+
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && popupAtual) popupAtual.remove(); });
+
     setInterval(atualizarLista, 1000);
 
+    // Atualiza o texto só quando muda (antes escrevia no DOM a cada frame)
     function atualizarEstadoPainel() {
       const el = document.getElementById('liveStatus');
       let html;
@@ -1051,7 +1277,7 @@
         html = FT.error
           ? 'Sem ligação ao servidor'
           : FT.ready
-            ? `<b>${Math.max(0, FT.count)}</b> em circulação${FT.parados ? ` · ${FT.parados}${FT.parados === 1 ? 'parado' : 'parados'} no terminal` : ''}<br>Posição calculada pelo horário`
+            ? `<b>${Math.max(0, FT.count)}</b> em circulação${FT.parados ? ` · ${FT.parados} ${FT.parados === 1 ? 'parado' : 'parados'} no terminal` : ''}<br>Posição calculada pelo horário`
             : 'A carregar horários…';
       } else {
         html = CP.error
@@ -1090,6 +1316,10 @@
             }))
         };
 
+        if (activeOperator === 'cp') {
+          CP.estacoes = new Map(stations.map(s => [normNome(s.name), [Number(s.lon), Number(s.lat)]]));
+        }
+
         if (map.getSource('stations')) {
           map.getSource('stations').setData(geojson);
         }
@@ -1114,10 +1344,10 @@
       }
 
       if (op === 'fertagus') {
-        map.flyTo({ center: [-9.05, 38.66], zoom: 10, speed: 1.4 });
-      } else {
-        map.flyTo({ center: [-8.22, 39.55], zoom: 6.3, speed: 1.4 });
-      }
+		map.flyTo({ center: [-9.05, 38.66], zoom: 10, speed: 1.4 });
+	  }else {
+		map.fitBounds(PT_BOUNDS, { padding: paddingPT(), duration: 1500 });
+	  }
 
       mostrarComboiosFertagus(op === 'fertagus');
       ligarCP(op === 'cp');
@@ -1128,12 +1358,15 @@
         cancelAnimationFrame(FT.rafId);
       }
 
-      SEGUIR = null;
+      SEGUIR = null; SELECIONADO = null;
+      if (popupAtual) popupAtual.remove();
+      limparRota();
       atualizarEstadoPainel();
       atualizarLista();
       carregarEstacoes();
     }
 
+    // Ao voltar ao separador, retoma as animações e vai buscar dados frescos
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) return;
       if (activeOperator === 'cp') ligarCP(true); else iniciarAnimacaoFertagus();
