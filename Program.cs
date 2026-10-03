@@ -256,6 +256,150 @@ _ = Task.Run(async () =>
     await rail.LoadAsync(railPath, http);
 });
 
+// =========================================================================
+// CARRIS METROPOLITANA (API v2 pública): autocarros em tempo real + percurso de cada padrão
+// =========================================================================
+const string CmBase = "https://api.carrismetropolitana.pt/v2";
+var cmLock = new SemaphoreSlim(1, 1);
+List<CmVehicleDto>? cmLastGood = null;
+string? cmLastError = null;
+
+async Task<string> CmGet(IHttpClientFactory f, string path)
+{
+    var client = f.CreateClient();
+    client.Timeout = TimeSpan.FromSeconds(90);   // /stops é grande
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("ComboiosApp/1.0");
+    return await client.GetStringAsync(CmBase + path);
+}
+
+async Task<Dictionary<string, CmLine>> CmLines(IHttpClientFactory f, IMemoryCache cache)
+{
+    if (cache.TryGetValue("cm_lines", out Dictionary<string, CmLine>? c) && c != null) return c;
+    var d = new Dictionary<string, CmLine>();
+    try
+    {
+        d = CmFeed.ParseLines(await CmGet(f, "/lines"));
+        cache.Set("cm_lines", d, TimeSpan.FromHours(12));
+    }
+    catch (Exception ex)
+    {
+        cmLastError = "linhas: " + ex.Message;
+        Console.WriteLine($"[CM] linhas: {ex.Message}");
+        cache.Set("cm_lines", d, TimeSpan.FromMinutes(2));   // tenta de novo dentro de 2 min
+    }
+    return d;
+}
+
+async Task<Dictionary<string, CmStopInfo>> CmStops(IHttpClientFactory f, IMemoryCache cache)
+{
+    if (cache.TryGetValue("cm_stops", out Dictionary<string, CmStopInfo>? c) && c != null) return c;
+    var d = new Dictionary<string, CmStopInfo>();
+    try
+    {
+        d = CmFeed.ParseStops(await CmGet(f, "/stops"));
+        cache.Set("cm_stops", d, TimeSpan.FromHours(12));
+    }
+    catch (Exception ex)
+    {
+        cmLastError = "paragens: " + ex.Message;
+        Console.WriteLine($"[CM] paragens: {ex.Message}");
+        cache.Set("cm_stops", d, TimeSpan.FromMinutes(2));
+    }
+    return d;
+}
+
+app.MapGet("/api/buses/vehicles", async (IHttpClientFactory f, IMemoryCache cache, IConfiguration cfg) =>
+{
+    if (cache.TryGetValue("cm_vehicles", out List<CmVehicleDto>? cached) && cached != null)
+        return Results.Ok(cached);
+
+    await cmLock.WaitAsync();
+    try
+    {
+        if (cache.TryGetValue("cm_vehicles", out cached) && cached != null)
+            return Results.Ok(cached);
+
+        var raw = await CmGet(f, "/vehicles");
+        var lines = await CmLines(f, cache);
+        var stops = await CmStops(f, cache);
+        var list = CmFeed.ParseVehicles(raw, lines, stops);
+        cache.Set("cm_vehicles", list, TimeSpan.FromSeconds(cfg.GetValue<int>("CarrisRealtime:CacheSeconds", 3)));
+        cmLastGood = list;
+        return Results.Ok(list);
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[CM] veículos: {ex.Message}");
+        if (cmLastGood != null) return Results.Ok(cmLastGood);
+        return Results.Problem("Falha ao obter o feed da Carris Metropolitana: " + ex.Message, statusCode: 502);
+    }
+    finally
+    {
+        cmLock.Release();
+    }
+});
+
+// Paragens de um padrão, para mostrar as que faltam ao autocarro selecionado
+app.MapGet("/api/buses/pattern/{id}", async (string id, IHttpClientFactory f, IMemoryCache cache) =>
+{
+    if (!System.Text.RegularExpressions.Regex.IsMatch(id, "^[A-Za-z0-9_\\[\\]-]{1,80}$")) return Results.BadRequest();
+    var key = "cm_pat_" + id;
+    if (cache.TryGetValue(key, out CmPatternDto? cached) && cached != null) return Results.Ok(cached);
+    try
+    {
+        var stopDict = await CmStops(f, cache);
+        // o id do feed pode trazer prefixos de versão, como "[AAAAA][BBBBB]4543_0_1": tenta o completo e depois sem prefixos
+        var curto = System.Text.RegularExpressions.Regex.Replace(id, @"^(\[[^\]]*\])+", "");
+        var candidatos = curto != id && curto.Length > 0 ? new[] { id, curto } : new[] { id };
+        CmPatternRaw? pat = null;
+        Exception? ultimo = null;
+        foreach (var cand in candidatos)
+        {
+            try
+            {
+                pat = CmFeed.ParsePattern(await CmGet(f, "/patterns/" + Uri.EscapeDataString(cand)), stopDict, id, curto);
+                if (pat.Stops.Count > 0) break;
+                Console.WriteLine($"[CM] padrão {cand}: resposta sem paragens reconhecidas");
+            }
+            catch (Exception ex)
+            {
+                ultimo = ex;
+                Console.WriteLine($"[CM] padrão {cand}: {ex.Message}");
+            }
+        }
+        if (pat == null || pat.Stops.Count == 0)
+            return Results.Problem($"Sem paragens para o padrão {id}" + (ultimo != null ? ": " + ultimo.Message : ""), statusCode: 502);
+        var dto = new CmPatternDto(pat.Headsign, pat.Stops);
+        cache.Set(key, dto, TimeSpan.FromHours(6));
+        return Results.Ok(dto);
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem("Falha ao obter o percurso: " + ex.Message, statusCode: 502);
+    }
+});
+
+// Diagnóstico: quantas linhas/paragens foram carregadas e o último erro
+app.MapGet("/api/buses/status", async (IHttpClientFactory f, IMemoryCache cache) =>
+{
+    var lines = await CmLines(f, cache);
+    var stops = await CmStops(f, cache);
+    return Results.Ok(new { lines = lines.Count, stops = stops.Count, lastError = cmLastError });
+});
+
+// Aquece as listas de linhas e paragens em segundo plano (o primeiro pedido não espera por elas)
+_ = Task.Run(async () =>
+{
+    try
+    {
+        var f = app.Services.GetRequiredService<IHttpClientFactory>();
+        var c = app.Services.GetRequiredService<IMemoryCache>();
+        await CmLines(f, c);
+        await CmStops(f, c);
+    }
+    catch { }
+});
+
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
@@ -398,7 +542,7 @@ public static class CpFeed
         return null;
     }
 
-    static JsonElement? FindArray(JsonElement e, int depth)
+    public static JsonElement? FindArray(JsonElement e, int depth)
     {
         if (e.ValueKind == JsonValueKind.Array) return e;
         if (e.ValueKind != JsonValueKind.Object || depth > 3) return null;
@@ -418,7 +562,7 @@ public static class CpFeed
         return null;
     }
 
-    static JsonElement? Direct(JsonElement obj, string[] keys)
+    public static JsonElement? Direct(JsonElement obj, string[] keys)
     {
         foreach (var p in obj.EnumerateObject())
             foreach (var k in keys)
@@ -441,7 +585,7 @@ public static class CpFeed
         return null;
     }
 
-    static JsonElement? Find(JsonElement obj, string[] keys, bool preferPosition)
+    public static JsonElement? Find(JsonElement obj, string[] keys, bool preferPosition)
     {
         var d = Direct(obj, keys);
         if (d != null) return d;
@@ -460,7 +604,7 @@ public static class CpFeed
         return Deep(obj, keys, 0);
     }
 
-    static double? Num(JsonElement? e)
+    public static double? Num(JsonElement? e)
     {
         if (e == null) return null;
         var v = e.Value;
@@ -472,7 +616,7 @@ public static class CpFeed
         return null;
     }
 
-    static string? Str(JsonElement? e)
+    public static string? Str(JsonElement? e)
     {
         if (e == null) return null;
         var v = e.Value;
@@ -770,5 +914,171 @@ public sealed class RailGraph
         while (came.TryGetValue(x, out var p)) { x = p; path.Add(x); }
         path.Reverse();
         return path;
+    }
+}
+
+public record CmLine(string Short, string Long, string? Color);
+public record CmStopInfo(string Name, double Lat, double Lon);
+public record CmVehicleDto(
+    string Id, double Lat, double Lon, double? Heading, string? Line, string? LineName, string? Color,
+    string? Pattern, string? Status, string? Stop, string? StopName, string? Occupancy, bool Stopped);
+public record CmStopDto(string? Id, string Name, double Lat, double Lon);
+public record CmPatternRaw(string? ShapeId, string? Headsign, List<CmStopDto> Stops);
+public record CmPatternDto(string? Headsign, List<CmStopDto> Stops);
+
+// Leitor tolerante da API v2 da Carris Metropolitana (a estrutura pode evoluir)
+public static class CmFeed
+{
+    static string? S(JsonElement el, params string[] keys) => CpFeed.Str(CpFeed.Direct(el, keys));
+    static double? N(JsonElement el, params string[] keys) => CpFeed.Num(CpFeed.Direct(el, keys));
+
+    static string? Cor(string? c)
+    {
+        if (string.IsNullOrWhiteSpace(c)) return null;
+        c = c.Trim();
+        if (c.StartsWith('#')) return c;
+        return c.Length == 6 && c.All(Uri.IsHexDigit) ? "#" + c : null;
+    }
+
+    static string? OcupacaoValida(string? o) => string.IsNullOrEmpty(o) || o == "NO_DATA_AVAILABLE" ? null : o;
+
+    public static Dictionary<string, CmLine> ParseLines(string raw)
+    {
+        var d = new Dictionary<string, CmLine>();
+        using var doc = JsonDocument.Parse(raw);
+        var arr = CpFeed.FindArray(doc.RootElement, 0);
+        if (arr == null) return d;
+        foreach (var el in arr.Value.EnumerateArray())
+        {
+            if (el.ValueKind != JsonValueKind.Object) continue;
+            var id = S(el, "id", "line_id");
+            if (id == null) continue;
+            d[id] = new CmLine(S(el, "short_name", "shortName") ?? id, S(el, "long_name", "longName", "name") ?? "", Cor(S(el, "color")));
+        }
+        return d;
+    }
+
+    public static Dictionary<string, CmStopInfo> ParseStops(string raw)
+    {
+        var d = new Dictionary<string, CmStopInfo>();
+        using var doc = JsonDocument.Parse(raw);
+        var arr = CpFeed.FindArray(doc.RootElement, 0);
+        if (arr == null) return d;
+        foreach (var el in arr.Value.EnumerateArray())
+        {
+            if (el.ValueKind != JsonValueKind.Object) continue;
+            var id = S(el, "id", "stop_id");
+            var name = S(el, "long_name") ?? S(el, "name", "stop_name") ?? S(el, "short_name");
+            var lat = N(el, "lat", "stop_lat", "latitude");
+            var lon = N(el, "lon", "stop_lon", "longitude");
+            if (id != null && name != null && lat != null && lon != null) d[id] = new CmStopInfo(name, lat.Value, lon.Value);
+        }
+        return d;
+    }
+
+    public static List<CmVehicleDto> ParseVehicles(string raw, Dictionary<string, CmLine> lines, Dictionary<string, CmStopInfo> stops)
+    {
+        var list = new List<CmVehicleDto>();
+        using var doc = JsonDocument.Parse(raw);
+        var arr = CpFeed.FindArray(doc.RootElement, 0);
+        if (arr == null) return list;
+        var agora = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+        foreach (var el in arr.Value.EnumerateArray())
+        {
+            if (el.ValueKind != JsonValueKind.Object) continue;
+            var lat = N(el, "lat", "latitude");
+            var lon = N(el, "lon", "lng", "longitude");
+            var id = S(el, "id");
+            if (lat == null || lon == null || id == null) continue;
+            if (lat < 36.8 || lat > 39.6 || lon < -10.0 || lon > -7.3) continue;   // área metropolitana de Lisboa e arredores
+
+            var ts = N(el, "timestamp");
+            if (ts != null)
+            {
+                var t = ts.Value > 1e12 ? ts.Value / 1000 : ts.Value;
+                if (agora - t > 20 * 60) continue;   // posição parada há mais de 20 min: veículo fora de serviço
+            }
+
+            var speed = N(el, "speed");
+            var bearing = N(el, "bearing", "heading");
+            var status = S(el, "current_status");
+            double? heading = bearing != null && ((speed ?? 1) > 0 || bearing != 0) ? bearing : null;
+
+            var lineId = S(el, "line_id");
+            CmLine? line = null;
+            if (lineId != null) lines.TryGetValue(lineId, out line);
+            var stopId = S(el, "stop_id");
+            if (stopId == "UNAVAILABLE_STOP_ID" || stopId == "") stopId = null;
+            string? stopName = null;
+            if (stopId != null && stops.TryGetValue(stopId, out var sn)) stopName = sn.Name;
+
+            list.Add(new CmVehicleDto(
+                id, lat.Value, lon.Value, heading,
+                line?.Short ?? lineId, line?.Long, line?.Color,
+                S(el, "pattern_id"), status, stopId, stopName,
+                OcupacaoValida(S(el, "occupancy_status", "occupancy")),
+                status == "STOPPED_AT" || (speed != null && speed == 0)));
+        }
+        return list;
+    }
+
+    public static CmPatternRaw ParsePattern(string raw, Dictionary<string, CmStopInfo> stopDict, params string[] ids)
+    {
+        var vazio = new CmPatternRaw(null, null, new List<CmStopDto>());
+        using var doc = JsonDocument.Parse(raw);
+        var root = doc.RootElement;
+        if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("data", out var data)) root = data;
+
+        var ver = root;
+        if (root.ValueKind == JsonValueKind.Array)
+        {
+            // várias versões do padrão: a que tem o id pedido, senão a válida hoje, senão a primeira
+            var hoje = DateTime.Now.ToString("yyyyMMdd");   // valid_on vem como "20250705"
+            JsonElement? pick = null;
+            var score = -1;
+            foreach (var e in root.EnumerateArray())
+            {
+                if (e.ValueKind != JsonValueKind.Object) continue;
+                var sc = 0;
+                var eid = CpFeed.Str(CpFeed.Direct(e, new[] { "id", "pattern_id" }));
+                if (eid != null && ids.Contains(eid)) sc += 2;
+                var v = CpFeed.Direct(e, new[] { "valid_on" });
+                if (v != null && v.Value.ValueKind == JsonValueKind.Array &&
+                    v.Value.EnumerateArray().Any(x => x.ValueKind == JsonValueKind.String && x.GetString() == hoje)) sc += 1;
+                if (sc > score) { score = sc; pick = e; }
+            }
+            if (pick == null) return vazio;
+            ver = pick.Value;
+        }
+        if (ver.ValueKind != JsonValueKind.Object) return vazio;
+
+        var shapeId = CpFeed.Str(CpFeed.Find(ver, new[] { "shape_id" }, false));
+        var headsign = CpFeed.Str(CpFeed.Find(ver, new[] { "headsign" }, false));
+
+        JsonElement? path = null;
+        foreach (var p in ver.EnumerateObject())
+            if ((p.Name == "path" || p.Name == "stops") && p.Value.ValueKind == JsonValueKind.Array) { path = p.Value; break; }
+        if (path == null) return new CmPatternRaw(shapeId, headsign, new List<CmStopDto>());
+
+        var stops = new List<(double Seq, CmStopDto Stop)>();
+        foreach (var el in path.Value.EnumerateArray())
+        {
+            if (el.ValueKind != JsonValueKind.Object) continue;
+            var sid = CpFeed.Str(CpFeed.Find(el, new[] { "stop_id" }, false)) ?? CpFeed.Str(CpFeed.Find(el, new[] { "id" }, false));
+            var lat = CpFeed.Num(CpFeed.Find(el, new[] { "lat", "latitude" }, false));
+            var lon = CpFeed.Num(CpFeed.Find(el, new[] { "lon", "lng", "longitude" }, false));
+            var name = CpFeed.Str(CpFeed.Find(el, new[] { "name", "stop_name", "short_name" }, false));
+            if ((lat == null || lon == null) && sid != null && stopDict.TryGetValue(sid, out var info))
+            {
+                lat = info.Lat;
+                lon = info.Lon;
+                name ??= info.Name;
+            }
+            if (lat == null || lon == null) continue;
+            var seq = CpFeed.Num(CpFeed.Find(el, new[] { "stop_sequence" }, false)) ?? stops.Count;
+            stops.Add((seq, new CmStopDto(sid, name ?? "", lat.Value, lon.Value)));
+        }
+        return new CmPatternRaw(shapeId, headsign, stops.OrderBy(x => x.Seq).Select(x => x.Stop).ToList());
     }
 }
