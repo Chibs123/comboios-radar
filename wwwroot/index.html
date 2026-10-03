@@ -1162,6 +1162,8 @@
 
     const painel = document.getElementById('painelGlobal');
     const btnRecolher = document.getElementById('btnRecolher');
+    const headerDrag = document.getElementById('headerDrag');
+    const sheetHandle = document.querySelector('.sheet-handle');
     
     function definirRecolhido(r) {
       painel.classList.toggle('collapsed', r);
@@ -1178,8 +1180,45 @@
       definirRecolhido(!painel.classList.contains('collapsed'));
     });
     
-    document.getElementById('headerDrag').addEventListener('click', () => {
+    // Clique simples no título
+    headerDrag.addEventListener('click', () => {
       if (window.innerWidth <= 768) definirRecolhido(!painel.classList.contains('collapsed'));
+    });
+
+    // --- Lógica de Arrastar (Swipe) no Telemóvel ---
+    let touchStartY = 0;
+    let touchCurrentY = 0;
+
+    function onTouchStart(e) { 
+      touchStartY = e.touches[0].clientY; 
+    }
+    
+    function onTouchMove(e) { 
+      touchCurrentY = e.touches[0].clientY; 
+    }
+    
+    function onTouchEnd() {
+      if (!touchStartY || !touchCurrentY || window.innerWidth > 768) return;
+      
+      const deltaY = touchCurrentY - touchStartY;
+      
+      // Margem de segurança de 40px para não disparar por acidente
+      if (deltaY > 40) {
+        definirRecolhido(true); // Arrastou para baixo -> Recolhe
+      } else if (deltaY < -40) {
+        definirRecolhido(false); // Arrastou para cima -> Expande
+      }
+      
+      touchStartY = 0; 
+      touchCurrentY = 0;
+    }
+
+    [headerDrag, sheetHandle].forEach(el => {
+      if(el) {
+        el.addEventListener('touchstart', onTouchStart, { passive: true });
+        el.addEventListener('touchmove', onTouchMove, { passive: true });
+        el.addEventListener('touchend', onTouchEnd);
+      }
     });
 
     if (window.innerWidth <= 768) {
@@ -1189,8 +1228,8 @@
     }
 
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && popupAtual) popupAtual.remove(); });
-    setInterval(atualizarLista, 1000);
-
+	setInterval(atualizarLista, 1000);
+	  
     function atualizarEstadoPainel() {
       const el = document.getElementById('liveStatus'); let html;
       if (activeOperator === 'fertagus') {
