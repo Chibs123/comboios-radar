@@ -214,7 +214,7 @@
       const collapsed = painelEl ? painelEl.classList.contains('collapsed') : true;
       
       return { 
-        top: 30, 
+        top: mobile ? 30 : 90, /* Aumentado para 90px no PC devido ao título flutuante superior */
         right: 30, 
         left: mobile ? 30 : 340, 
         bottom: mobile ? (collapsed ? 185 : window.innerHeight * 0.65 + 20) : 30 
