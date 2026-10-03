@@ -209,7 +209,7 @@
     let popupAtual = null;
     function novoPopup(opcoes) {
       if (popupAtual) popupAtual.remove();
-      popupAtual = new maplibregl.Popup(opcoes);
+      popupAtual = new maplibregl.Popup({ closeButton: false, ...opcoes });
       popupAtual.on('close', () => { SEGUIR = null; SELECIONADO = null; limparRota(); });
       return popupAtual;
     }
@@ -1218,11 +1218,24 @@
       touchCurrentY = 0;
     }
 
-    [painel].forEach(el => {
+    // Lista específica das zonas onde o utilizador pode arrastar a gaveta
+    const zonasDeArrasto = [
+      document.querySelector('.sheet-handle'),
+      document.getElementById('headerDrag'),
+      document.querySelector('.operator-toggle'),
+      document.querySelector('.list-head')
+    ];
+
+    zonasDeArrasto.forEach(el => {
       if(el) {
-        // Prevenir o scroll da página enquanto se arrasta a gaveta
         el.addEventListener('touchstart', (e) => { onTouchStart(e); }, { passive: true });
-        el.addEventListener('touchmove', (e) => { e.preventDefault(); onTouchMove(e); }, { passive: false });
+        el.addEventListener('touchmove', (e) => { 
+          // Se estiver a tocar no input de pesquisa ou na dropdow, permite o comportamento nativo
+          if(e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+          
+          e.preventDefault(); // Bloqueia o refresh da página
+          onTouchMove(e); 
+        }, { passive: false });
         el.addEventListener('touchend', onTouchEnd);
       }
     });
@@ -1237,14 +1250,19 @@
     setInterval(atualizarLista, 1000); // <-- Restaurado!
 
     function atualizarEstadoPainel() {
-      const el = document.getElementById('liveStatus'); let html;
-      if (activeOperator === 'fertagus') {
-        html = FT.error ? 'Sem ligação ao servidor' : FT.ready ? `<b>${Math.max(0, FT.count)}</b> em circulação${FT.parados ? ` · ${FT.parados} no terminal` : ''}<br>Posição calculada pelo horário` : 'A carregar horários…';
-      } else if (activeOperator === 'cm') {
-        html = CM.error ? 'Feed Carris indisponível:<br>' + esc(CM.error) : `<b>${CM.trains.size}</b> autocarros com posição<br>Atualiza a cada ${CM_POLL_MS / 1000} s`;
-      } else {
-        html = CP.error ? 'Feed CP indisponível:<br>' + esc(CP.error) : `<b>${CP.trains.size}</b> comboios CP com posição<br>Atualiza a cada ${CP_POLL_MS / 1000} s`;
+      const el = document.getElementById('liveStatus'); 
+      let html = '';
+      
+      if (activeOperator === 'fertagus' && FT.error) {
+        html = 'Sem ligação ao servidor';
+      } else if (activeOperator === 'cm' && CM.error) {
+        html = 'Feed Carris indisponível:<br>' + esc(CM.error);
+      } else if (activeOperator === 'cp' && CP.error) {
+        html = 'Feed CP indisponível:<br>' + esc(CP.error);
       }
+      
+      // Esconde o espaço do texto se não houver erro nenhum
+      el.style.display = html === '' ? 'none' : 'block';
       if (el._html !== html) { el.innerHTML = html; el._html = html; }
     }
 
