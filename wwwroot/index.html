@@ -1253,6 +1253,11 @@
       ['fertagus-track-line', 'fertagus-trains-halo', 'fertagus-trains-arrow', 'fertagus-trains-label'].forEach(id => { if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', v); });
     }
 
+	function mostrarRedeFerroviaria(visivel) {
+      const v = visivel ? 'visible' : 'none';
+      if (map.getLayer('railway')) map.setLayoutProperty('railway', 'visibility', v);
+      if (map.getLayer('railway_minor')) map.setLayoutProperty('railway_minor', 'visibility', v);
+    }
     async function carregarEstacoes() {
       if (activeOperator === 'cm') {
         if (map.getSource('stations')) map.getSource('stations').setData({ type: 'FeatureCollection', features: [] });
@@ -1293,7 +1298,9 @@
       mostrarComboiosFertagus(op === 'fertagus');
       ligarCP(op === 'cp');
       ligarCM(op === 'cm');
-      
+
+	  mostrarRedeFerroviaria(op === 'cp');
+		
       if (op === 'fertagus') iniciarAnimacaoFertagus(); else cancelAnimationFrame(FT.rafId);
 
       SEGUIR = null; SELECIONADO = null;
