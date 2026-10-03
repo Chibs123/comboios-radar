@@ -105,7 +105,7 @@
         display: block; width: 38px; height: 4px; border-radius: 2px;
         background: rgba(255, 255, 255, 0.25); margin: 0 auto 6px auto; flex: none;
       }
-      .brand-row { cursor: pointer; padding-bottom: 2px; }
+      .brand-row { padding-bottom: 2px; }
       
       .sidebar-panel { 
         top: auto; bottom: 0; left: 0; right: 0; width: 100%; 
@@ -114,12 +114,16 @@
         background: rgba(11, 15, 23, 0.95); box-shadow: 0 -4px 30px rgba(0, 0, 0, 0.6);
         transition: height 0.35s cubic-bezier(0.2, 1, 0.3, 1);
         overflow: hidden;
+        touch-action: none; /* Previne scroll default em áreas de arrasto */
       }
       .sidebar-panel.collapsed { height: 165px; }
       
       .sidebar-panel.collapsed .list-head,
       .sidebar-panel.collapsed .train-list { opacity: 0; pointer-events: none; margin-top: 20px; }
       .list-head, .train-list { opacity: 1; transition: all 0.3s ease; }
+      
+      /* Liberta o scroll na lista */
+      .train-list { touch-action: auto; overscroll-behavior: contain; }
 
       .maplibregl-ctrl-bottom-right { transition: transform 0.35s cubic-bezier(0.2, 1, 0.3, 1); }
       body.sheet-open .maplibregl-ctrl-bottom-right { transform: translateY(calc(-65vh + 20px)); }
@@ -222,7 +226,7 @@
       const z = map.getZoom();
       return z >= 11 ? 7 * 78271.5 * Math.cos(38.7 * Math.PI / 180) / Math.pow(2, z) : 0;
     }
-	
+    
     function deslocarLateral(pos, bearing, m) {
       if (!m) return pos;
       const r = (bearing + 90) * Math.PI / 180;
@@ -1213,10 +1217,11 @@
       touchCurrentY = 0;
     }
 
-    [headerDrag, sheetHandle].forEach(el => {
+    [painel].forEach(el => {
       if(el) {
-        el.addEventListener('touchstart', onTouchStart, { passive: true });
-        el.addEventListener('touchmove', onTouchMove, { passive: true });
+        // Prevenir o scroll da página enquanto se arrasta a gaveta
+        el.addEventListener('touchstart', (e) => { onTouchStart(e); }, { passive: true });
+        el.addEventListener('touchmove', (e) => { e.preventDefault(); onTouchMove(e); }, { passive: false });
         el.addEventListener('touchend', onTouchEnd);
       }
     });
@@ -1228,8 +1233,8 @@
     }
 
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && popupAtual) popupAtual.remove(); });
-	setInterval(atualizarLista, 1000);
-	  
+    setInterval(atualizarLista, 1000); // <-- Restaurado!
+
     function atualizarEstadoPainel() {
       const el = document.getElementById('liveStatus'); let html;
       if (activeOperator === 'fertagus') {
@@ -1304,3 +1309,5 @@
   </script>
 </body>
 </html>
+
+No pc quando o menu arrasta, tbm da refresh a pagina oq nao deve acontecer
