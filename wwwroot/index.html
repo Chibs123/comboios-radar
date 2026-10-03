@@ -18,7 +18,7 @@
       height: 100vh;
       width: 100vw;
       overflow: hidden;
-	  overscroll-behavior: none;	
+      overscroll-behavior: none;
     }
     #map { width: 100%; height: 100%; }
     #map canvas { filter: brightness(1.18) contrast(1.06); }
@@ -106,8 +106,14 @@
         display: block; width: 38px; height: 4px; border-radius: 2px;
         background: rgba(255, 255, 255, 0.25); margin: 0 auto 6px auto; flex: none;
       }
-      .brand-row { padding-bottom: 2px; }
       
+      /* --- ALTERAÇÕES PARA ESCONDER BOTÃO E CENTRAR TÍTULO --- */
+      .brand-row { 
+        padding-bottom: 2px; 
+        justify-content: center; /* Centra o conteúdo */
+      }
+      .btn-collapse { display: none; } /* Esconde a seta no telemóvel */
+
       .sidebar-panel { 
         top: auto; bottom: 0; left: 0; right: 0; width: 100%; 
         height: 65vh; max-height: none; padding: 12px 16px max(env(safe-area-inset-bottom, 20px), 20px) 16px; 
@@ -129,10 +135,6 @@
       .maplibregl-ctrl-bottom-right { transition: transform 0.35s cubic-bezier(0.2, 1, 0.3, 1); }
       body.sheet-open .maplibregl-ctrl-bottom-right { transform: translateY(calc(-65vh + 20px)); }
       body.sheet-collapsed .maplibregl-ctrl-bottom-right { transform: translateY(-165px); }
-	  
-	  /* Lógica invertida para a gaveta do telemóvel */
-      .btn-collapse svg { transform: rotate(180deg); } /* Gaveta aberta = aponta para baixo */
-      .sidebar-panel.collapsed .btn-collapse svg { transform: rotate(0deg); } /* Gaveta fechada = aponta para cima */
     }
   </style>
   
@@ -1247,19 +1249,30 @@
     }
 
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && popupAtual) popupAtual.remove(); });
-    setInterval(atualizarLista, 1000); // <-- Restaurado!
+    setInterval(atualizarLista, 1000);
 
-    function atualizarEstadoPainel() {
+function atualizarEstadoPainel() {
       const el = document.getElementById('liveStatus'); 
-      let html = '';
+      let html;
       
-      if (activeOperator === 'fertagus' && FT.error) {
-        html = 'Sem ligação ao servidor';
-      } else if (activeOperator === 'cm' && CM.error) {
-        html = 'Feed Carris indisponível:<br>' + esc(CM.error);
-      } else if (activeOperator === 'cp' && CP.error) {
-        html = 'Feed CP indisponível:<br>' + esc(CP.error);
+      if (activeOperator === 'fertagus') {
+        html = FT.error 
+          ? 'Sem ligação ao servidor' 
+          : FT.ready 
+            ? `<b>${Math.max(0, FT.count)}</b> em circulação${FT.parados ? ` · ${FT.parados} no terminal` : ''}` 
+            : 'A carregar horários…';
+      } else if (activeOperator === 'cm') {
+        html = CM.error 
+          ? 'Feed Carris indisponível:<br>' + esc(CM.error) 
+          : `<b>${CM.trains.size}</b> autocarros com posição`;
+      } else {
+        html = CP.error 
+          ? 'Feed CP indisponível:<br>' + esc(CP.error) 
+          : `<b>${CP.trains.size}</b> comboios com posição`;
       }
+      
+      if (el._html !== html) { el.innerHTML = html; el._html = html; }
+    }
       
       // Esconde o espaço do texto se não houver erro nenhum
       el.style.display = html === '' ? 'none' : 'block';
@@ -1311,7 +1324,7 @@
       mostrarComboiosFertagus(op === 'fertagus');
       ligarCP(op === 'cp');
       ligarCM(op === 'cm');
-		
+      
       if (op === 'fertagus') iniciarAnimacaoFertagus(); else cancelAnimationFrame(FT.rafId);
 
       SEGUIR = null; SELECIONADO = null;
