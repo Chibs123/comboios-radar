@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Live Radar — Portugal</title>
+  <title>Live Train Radar — Portugal</title>
   
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;600;700;800&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap" rel="stylesheet">
@@ -54,11 +54,11 @@
     }
     .title-mobile { display: none; }
     .title-desktop { display: inline; }
-    
+
     /* --- SIDEBAR BASE (DESKTOP) --- */
     .sheet-handle { display: none; }
     .sidebar-panel {
-      position: absolute; top: 18px; left: 18px; z-index: 10; width: 400px;
+      position: absolute; top: 18px; left: 18px; z-index: 10; width: 310px;
       max-height: calc(100vh - 36px); display: flex; flex-direction: column; gap: 12px;
       background: rgba(14, 18, 27, 0.92); border: 1px solid rgba(255, 255, 255, 0.12);
       border-radius: 20px; padding: 16px; backdrop-filter: blur(14px); box-shadow: 0 12px 40px rgba(0, 0, 0, 0.7);
@@ -87,10 +87,10 @@
     .btn-op { flex: 1; border: none; background: transparent; color: #94a3b8; font-size: 0.76rem; font-weight: 700; padding: 7px 0; border-radius: 8px; cursor: pointer; transition: all 0.2s; }
     .btn-op.active.fertagus { background: #10b981; color: #032514; }
     .btn-op.active.cm { background: #facc15; color: #1a1400; }
-    .btn-op.active.cp { background: #0284c7; color: #ffffff; }
+    .btn-op.active.cp { background: #a78bfa; color: #1e1038; }
 
     .live-status { font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; font-weight: 600; color: #94a3b8; line-height: 1.5; }
-    .live-status b { color: #10b981; font-size: 0.85rem; }
+	.live-status b { color: var(--cor-op, #10b981); font-size: 0.85rem; }
 
     .list-head { white-space: nowrap; display: flex; align-items: center; justify-content: space-between; gap: 8px; font-family: 'JetBrains Mono', monospace; font-size: 0.68rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: #94a3b8; }
     .list-head input, .list-head select { background: rgba(0, 0, 0, 0.45); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 8px; color: #f8fafc; font-size: 0.72rem; padding: 5px 8px; outline: none; font-family: 'Plus Jakarta Sans', sans-serif; letter-spacing: 0; text-transform: none; }
@@ -118,17 +118,14 @@
       #desktopTopTitle { display: none; }
       .title-desktop { display: none; }
       .title-mobile { display: inline; }
+
       .sheet-handle {
         display: block; width: 38px; height: 4px; border-radius: 2px;
         background: rgba(255, 255, 255, 0.25); margin: 0 auto 6px auto; flex: none;
       }
       
-      /* --- ALTERAÇÕES PARA ESCONDER BOTÃO E CENTRAR TÍTULO --- */
-      .brand-row { 
-        padding-bottom: 2px; 
-        justify-content: center; /* Centra o conteúdo */
-      }
-      .btn-collapse { display: none; } /* Esconde a seta no telemóvel */
+      .brand-row { padding-bottom: 2px; justify-content: center; }
+      .btn-collapse { display: none; }
 
       .sidebar-panel { 
         top: auto; bottom: 0; left: 0; right: 0; width: 100%; 
@@ -137,7 +134,7 @@
         background: rgba(11, 15, 23, 0.95); box-shadow: 0 -4px 30px rgba(0, 0, 0, 0.6);
         transition: height 0.35s cubic-bezier(0.2, 1, 0.3, 1);
         overflow: hidden;
-        touch-action: none; /* Previne scroll default em áreas de arrasto */
+        touch-action: none;
       }
       .sidebar-panel.collapsed { height: 165px; }
       
@@ -145,7 +142,6 @@
       .sidebar-panel.collapsed .train-list { opacity: 0; pointer-events: none; margin-top: 20px; }
       .list-head, .train-list { opacity: 1; transition: all 0.3s ease; }
       
-      /* Liberta o scroll na lista */
       .train-list { touch-action: auto; overscroll-behavior: contain; }
 
       .maplibregl-ctrl-bottom-right { transition: transform 0.35s cubic-bezier(0.2, 1, 0.3, 1); }
@@ -168,14 +164,13 @@
     <div class="loader-subtext">A INICIALIZAR MAPA</div>
   </div>
 
-  <!-- Novo título principal centrado no ecrã para o PC -->
   <div id="desktopTopTitle">TRANSPORTES DE PORTUGAL</div>
 
   <aside class="sidebar-panel collapsed" id="painelGlobal">
     <div class="sheet-handle"></div>
     <div class="brand-row" id="headerDrag">
       <div class="brand-title">
-        <span class="title-desktop">TIPO DE TRANSPORTES</span>
+        <span class="title-desktop">LISTA DE TRANSPORTES</span>
         <span class="title-mobile">TRANSPORTES DE PORTUGAL</span>
       </div>
       <button class="btn-collapse" id="btnRecolher" aria-label="Recolher/Expandir painel">
@@ -187,7 +182,6 @@
       <button class="btn-op" id="btnFT" onclick="selecionarOperador('fertagus')">FERTAGUS</button>
       <button class="btn-op" id="btnCM" onclick="selecionarOperador('cm')">CARRIS</button>
     </div>
-    <!-- ... O RESTO MANTÉM-SE IGUAL ... -->
     <div class="live-status" id="liveStatus"></div>
     <div class="list-head">
       <span id="listaTitulo">Ativos</span>
@@ -204,17 +198,16 @@
   <script>
     const API_BASE = location.protocol === 'file:' ? 'http://localhost:5000' : '';
     let activeOperator = "cp";
+    const COR = { cp: '#a78bfa', fertagus: '#10b981', cm: '#facc15', estacao: '#38bdf8' };
+    const PT_BOUNDS = [[-9.8, 36.8], [-6.0, 42.3]];
 
-    const PT_BOUNDS = [[-9.8, 36.8], [-6.0, 42.3]];   // Portugal continental
-
-    // Deixa espaço para o painel lateral no PC, e para a gaveta no fundo em telemóveis
     const paddingPT = () => {
       const mobile = window.innerWidth <= 768;
       const painelEl = document.getElementById('painelGlobal');
       const collapsed = painelEl ? painelEl.classList.contains('collapsed') : true;
       
       return { 
-        top: mobile ? 30 : 90, /* Aumentado para 90px no PC devido ao título flutuante superior */
+        top: mobile ? 30 : 90, 
         right: 30, 
         left: mobile ? 30 : 340, 
         bottom: mobile ? (collapsed ? 185 : window.innerHeight * 0.65 + 20) : 30 
@@ -227,7 +220,7 @@
       bounds: PT_BOUNDS,
       fitBoundsOptions: { padding: paddingPT() },
       minZoom: 5,
-      maxZoom: 14,
+      maxZoom: 16,
       maxBounds: [[-22, 33], [4, 47]]
     });
 
@@ -331,18 +324,36 @@
 
       map.addSource('stations', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
 
+      // ['zoom'] não pode ser usado em filtros: uma camada por tipo, cada uma com o seu minzoom
       map.addLayer({
-        id: 'stations-hitbox', minzoom: 8, type: 'circle', source: 'stations', paint: { 'circle-radius': 16, 'circle-opacity': 0 }
+        id: 'stations-hitbox', minzoom: 8, type: 'circle', source: 'stations',
+        filter: ['!=', ['get', 'operator'], 'cm'],
+        paint: { 'circle-radius': 16, 'circle-opacity': 0 }
+      });
+      map.addLayer({
+        id: 'stations-hitbox-cm', minzoom: 8, type: 'circle', source: 'stations',
+        filter: ['==', ['get', 'operator'], 'cm'],
+        paint: { 'circle-radius': 12, 'circle-opacity': 0 }
       });
 
       map.addLayer({
         id: 'stations-ring', minzoom: 8, type: 'circle', source: 'stations',
         paint: {
-          'circle-color': '#090d16',
-          'circle-radius': ['interpolate', ['linear'], ['zoom'], 6, 2.5, 11, 4.5, 16, 6],
-          'circle-stroke-width': 2,
-          'circle-stroke-color': ['case', ['==', ['get', 'operator'], 'cp'], '#0284c7', '#22c55e']
-        }
+		  'circle-color': COR.estacao,
+		  'circle-stroke-width': 0,
+		  'circle-radius': [
+			'interpolate', ['linear'], ['zoom'],
+			6,    ['case', ['==', ['get', 'operator'], 'cm'], 0,   2.5],
+			9,    ['case', ['==', ['get', 'operator'], 'cm'], 1.3, 3.0],
+			10.5, ['case', ['==', ['get', 'operator'], 'cm'], 2.2, 4.0],
+			16,   ['case', ['==', ['get', 'operator'], 'cm'], 5,   6.0]
+		  ],
+		  'circle-opacity': [
+			'interpolate', ['linear'], ['zoom'],
+			8.5, ['case', ['==', ['get', 'operator'], 'cm'], 0,   1],
+			10,  ['case', ['==', ['get', 'operator'], 'cm'], 0.9, 1]
+		  ]
+		}
       });
 
       map.addLayer({
@@ -351,18 +362,119 @@
         paint: { 'text-color': '#cbd5e1', 'text-halo-color': '#090d16', 'text-halo-width': 2 }
       });
 
-      map.on('mouseenter', 'stations-hitbox', () => { map.getCanvas().style.cursor = 'pointer'; });
-      map.on('mouseleave', 'stations-hitbox', () => { map.getCanvas().style.cursor = ''; });
-      map.on('click', 'stations-hitbox', (e) => {
-        const coords = e.features[0].geometry.coordinates.slice();
-        const { name, code } = e.features[0].properties;
+      for (const camada of ['stations-hitbox', 'stations-hitbox-cm']) {
+        map.on('mouseenter', camada, () => { map.getCanvas().style.cursor = 'pointer'; });
+        map.on('mouseleave', camada, () => { map.getCanvas().style.cursor = ''; });
+        map.on('click', camada, aoClicarEstacao);
+      }
 
-        novoPopup({ offset: 8 }).setLngLat(coords).setHTML(`
-            <div style="font-size:0.72rem; text-transform:uppercase; color:#94a3b8; font-weight:700;">Estação</div>
-            <div style="font-size:1.05rem; font-weight:800; color:#fff;">${esc(name)}</div>
-            <div style="font-size:0.7rem; color:#64748b; font-family:'JetBrains Mono',monospace;">ID: ${esc(code)}</div>
-        `).addTo(map);
-      });
+	async function aoClicarEstacao(e) {
+        const coords = e.features[0].geometry.coordinates.slice();
+        const { name, code, operator } = e.features[0].properties;
+        const cm = operator === 'cm';
+
+        const cab = `
+          <div style="font-size:0.72rem; text-transform:uppercase; color:#94a3b8; font-weight:700;">${cm ? 'Paragem · Carris Metropolitana' : 'Estação'}</div>
+          <div style="font-size:1.05rem; font-weight:800; color:#fff; max-width:260px;">${esc(name)}</div>`;
+        const rodape = `<div style="margin-top:6px; font-size:0.7rem; color:#64748b; font-family:'JetBrains Mono',monospace;">ID: ${esc(code)}</div>`;
+
+        const popup = novoPopup({ offset: 8 }).setLngLat(coords).setHTML(cab + rodape).addTo(map);
+        if (!cm || !code) return;
+
+        let detalhes = '';
+        let chegadas = `<div style="margin-top:8px; font-size:0.75rem; color:#cbd5e1;">A carregar próximas partidas…</div>`;
+        const desenhar = () => popup.setHTML(cab + detalhes + chegadas + rodape);
+        const aberto = () => popupAtual === popup;
+        
+        // O Endpoint oficial da v2 que retorna as linhas e infos é a listagem gigante.
+        // O teu backend no Program.cs já tem a lista toda. Para ser rápido, vamos bater
+        // no endpoint v3 não documentado que o site deles usa para os painéis, ou no V2 realtime se ainda responder.
+        
+        // Como o `/v2/stops/{code}` dá 404, vamos passar à frente e tentar o `/v2/stops/{code}/realtime`
+        // Mas vamos embrulhar tudo com cuidado.
+        desenhar();
+
+        // 2) Próximas partidas via TML Mobilidade (Carris Metropolitana)
+        try {
+          // Usa o novo endpoint que descobriste
+          const urlTML = cm ? `https://go.tmlmobilidade.pt/hub/api/v1/eta/by-stop/${encodeURIComponent(code)}` : base + '/realtime';
+          const res = await fetch(urlTML);
+          
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          const data = await res.json();
+          if (!aberto()) return;
+
+          // A nova API TML guarda os autocarros no array "data"
+          let prox = [];
+          if (cm) {
+              prox = (Array.isArray(data.data) ? data.data : [])
+                .sort((a, b) => a.eta_seconds - b.eta_seconds)
+                .slice(0, 5);
+          } else {
+              const agora = Math.floor(Date.now() / 1000);
+              prox = (Array.isArray(data) ? data : [])
+                .map(d => ({ ...d, t: d.estimated_arrival_unix || d.scheduled_arrival_unix, previsto: !!d.estimated_arrival_unix }))
+                .filter(d => d.t && d.t >= agora - 60)
+                .sort((a, b) => a.t - b.t)
+                .slice(0, 5);
+          }
+
+          if (!prox.length) {
+            chegadas = `<div style="margin-top:8px; font-size:0.75rem; color:#64748b;">Sem partidas previstas a curto prazo.</div>`;
+          } else {
+            // Extrai as linhas únicas a partir do trip_id para as etiquetas superiores
+            if (cm && !detalhes) {
+                const linhasUnicas = [...new Set(prox.map(p => {
+                    const m = p.trip_id ? p.trip_id.match(/(\d{4})/) : null;
+                    return m ? m[1] : '?';
+                }))].filter(l => l !== '?');
+                
+                if (linhasUnicas.length > 0) {
+                     detalhes = `<div style="margin-top:8px; display:flex; flex-wrap:wrap; gap:4px; max-width:260px;">`
+                      + linhasUnicas.slice(0, 24).map(l => `<span style="background:${COR.cm}; color:#1a1400; padding:1px 5px; border-radius:4px; font-weight:700; font-size:0.65rem;">${esc(l)}</span>`).join('')
+                      + `</div>`;
+                }
+            }
+
+            const agora = Math.floor(Date.now() / 1000);
+            chegadas = `<div style="margin-top:10px; display:flex; flex-direction:column; gap:6px;">` + prox.map(b => {
+              
+              let min = 0, line_id = '', destino = '', quando = '';
+              
+              if (cm) {
+                  // Lógica API TML
+                  min = Math.floor(b.eta_seconds / 60);
+                  quando = min <= 0 ? `<span style="color:${COR.cm}; font-weight:700;">A chegar</span>` : `em ${min} min`;
+                  // O trip_id tem este formato: "[ZLLEW][A2L1N]4436_0_1|600|1100" -> extraímos os 4 algarismos da linha
+                  const m = b.trip_id ? b.trip_id.match(/(\d{4})/) : null;
+                  line_id = m ? m[1] : 'BUS';
+                  destino = `Carreira ${line_id}`; // API TML não fornece o headsign, usamos o número da carreira
+              } else {
+                  // Lógica Antiga (CP/Outros)
+                  min = Math.floor((b.t - agora) / 60);
+                  const hora = new Date(b.t * 1000).toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Lisbon' });
+                  quando = min <= 0 ? `<span style="color:${COR.cm}; font-weight:700;">A chegar</span>` : min < 60 ? `em ${min} min` : hora;
+                  line_id = b.line_id;
+                  destino = b.headsign;
+              }
+
+              return `
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:6px; min-width:220px;">
+                  <div style="flex:1; min-width:0; display:flex; align-items:center; gap:6px;">
+                    <span style="background:${COR.cm}; color:#1a1400; padding:1px 5px; border-radius:4px; font-weight:700; font-size:0.65rem; flex:none;">${esc(line_id)}</span>
+                    <span style="font-size:0.75rem; color:#e2e8f0; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:130px;">${esc(destino)}</span>
+                  </div>
+                  <div style="font-size:0.75rem; color:#cbd5e1; flex:none;">${quando}</div>
+                </div>`;
+            }).join('') + `</div>`;
+          }
+        } catch (err) {
+          console.error('Partidas da paragem:', err);
+          chegadas = `<div style="margin-top:8px; font-size:0.75rem; color:#64748b;">Paragem sem estimativas disponíveis.</div>`;
+        }
+        
+        if (aberto()) desenhar();
+      }
 
       atualizarEstadoPainel();
       iniciarRadarFertagus();
@@ -452,7 +564,7 @@
         id: 'fertagus-trains-halo', type: 'circle', source: 'fertagus-trains', layout: { visibility: 'none' },
         paint: {
           'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 9, 14, 15],
-          'circle-color': ['case', ['==', ['get', 'dir'], 'sul'], '#0ea5e9', '#10b981'],
+		  'circle-color': COR.fertagus,
           'circle-opacity': ['case', ['==', ['get', 'estac'], 1], 0.5, 0.95],
           'circle-stroke-width': 2, 'circle-stroke-color': '#06080e'
         }
@@ -678,9 +790,9 @@
         id: 'cm-trains-halo', type: 'circle', source: 'cm-trains', layout: { visibility: 'none' },
         paint: {
           'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 3.5, 12, 7, 15, 11],
-          'circle-color': ['coalesce', ['get', 'color'], '#facc15'],
-          'circle-opacity': ['case', ['==', ['get', 'parado'], 1], 0.6, 1],
-          'circle-stroke-width': 1.5, 'circle-stroke-color': '#f8fafc'
+		  'circle-color': COR.cm,
+		  'circle-stroke-width': 2, 'circle-stroke-color': '#06080e',
+          'circle-opacity': ['case', ['==', ['get', 'parado'], 1], 0.6, 1]
         }
       });
       map.addLayer({
@@ -728,22 +840,29 @@
     }
 
     function carregarPercursoCM(id, pattern) {
-      CP.rotaStops = null; CP.rotaPath = null; CP.rotaAt = null; CP.rotaChave = null; CP.rotaIdx = null;
+      CP.rotaStops = null; CP.rotaPath = null; CP.rotaAt = null; CP.rotaChave = null; CP.rotaIdx = null; CP.linhaIdx = null;
       CP.rotaPattern = pattern;
       const vazio = { type: 'FeatureCollection', features: [] };
       if (map.getSource('rota-paragens')) map.getSource('rota-paragens').setData(vazio);
       if (map.getSource('rota-linha')) map.getSource('rota-linha').setData(vazio);
       if (!pattern) return;
+      
       fetch(`${API_BASE}/api/buses/pattern/${encodeURIComponent(pattern)}`)
         .then(r => r.ok ? r.json() : null)
-        .then(d => { if (d && SELECIONADO && SELECIONADO.op === 'cm' && SELECIONADO.id === id && CP.rotaPattern === pattern) CP.rotaStops = d.stops; })
+        .then(d => {
+          if (d && SELECIONADO && SELECIONADO.op === 'cm' && SELECIONADO.id === id && CP.rotaPattern === pattern) {
+            CP.rotaStops = d.stops;
+            CP.rotaPath = d.path && d.path.length > 1 ? d.path : null;
+          }
+        })
         .catch(() => {});
     }
 
     function atualizarParagensCM(s) {
-      const st = CP.rotaStops, p = map.getSource('rota-paragens');
-      if (!st || !st.length || !p) return;
+      const st = CP.rotaStops, p = map.getSource('rota-paragens'), l = map.getSource('rota-linha');
+      if (!st || !st.length || !p || !l) return;
       const pr = s.feature.properties;
+      
       let i = pr.stopId ? st.findIndex((x, k) => x.id === pr.stopId && k >= (CP.rotaIdx || 0)) : -1;
       if (i < 0 && pr.stopId) i = st.findIndex(x => x.id === pr.stopId);
       if (i < 0) {
@@ -757,12 +876,29 @@
       if (pr.status === 'STOPPED_AT') i++;
       CP.rotaIdx = Math.max(0, i);
       const chave = SELECIONADO.id + ':' + i + ':' + st.length;
-      if (CP.rotaChave === chave) return;
-      CP.rotaChave = chave;
-      p.setData({
-        type: 'FeatureCollection',
-        features: st.slice(Math.max(0, i)).map(x => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [x.lon, x.lat] }, properties: { label: x.name } }))
-      });
+      if (CP.rotaChave !== chave) {
+        CP.rotaChave = chave;
+        p.setData({
+          type: 'FeatureCollection',
+          features: st.slice(Math.max(0, i)).map(x => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [x.lon, x.lat] }, properties: { label: x.name } }))
+        });
+      }
+
+      if (CP.rotaPath && CP.rotaPath.length > 0) {
+          const path = CP.rotaPath;
+          const k = Math.cos(s.lat * Math.PI / 180);
+          let startIdx = CP.linhaIdx || 0;
+          let bd = Infinity;
+          const limite = CP.linhaIdx != null ? Math.min(path.length, startIdx + 100) : path.length;
+          
+          for (let j = Math.max(0, startIdx - 10); j < limite; j++) {
+            const dx = (path[j][0] - s.lon) * k, dy = path[j][1] - s.lat, d = dx * dx + dy * dy;
+            if (d < bd) { bd = d; startIdx = j; }
+          }
+          
+          CP.linhaIdx = startIdx;
+          l.setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: [[s.lon, s.lat], ...path.slice(startIdx)] } });
+      }
     }
 
     function ligarCM(ativo) {
@@ -948,9 +1084,9 @@
       map.addLayer({
         id: 'cp-trains-halo', type: 'circle', source: 'cp-trains',
         paint: {
-          'circle-radius': ['interpolate', ['linear'], ['zoom'], 6, 5, 10, 8, 14, 13],
-          'circle-color': ['case', ['>=', ['get', 'delayMin'], 6], '#ef4444', ['>=', ['get', 'delayMin'], 1], '#f59e0b', '#4ade80'],
-          'circle-stroke-width': 2, 'circle-stroke-color': '#06080e'
+			'circle-color': COR.cp,
+			'circle-stroke-width': ['case', ['>=', ['get', 'delayMin'], 1], 3.5, 2],
+			'circle-stroke-color': ['case', ['>=', ['get', 'delayMin'], 6], '#ef4444', ['>=', ['get', 'delayMin'], 1], '#f59e0b', '#06080e']
         }
       });
       map.addLayer({
@@ -1108,9 +1244,9 @@
           .sort((a, b) => (LISTA.ordem === 'estado' ? a.parado - b.parado : 0)
             || String(a.line).localeCompare(String(b.line), 'pt', { numeric: true }) || String(a.id).localeCompare(String(b.id)));
         total = todos.length;
-        html = todos.slice(0, 250).map(p => `
+		html = todos.slice(0, 250).map(p => `
           <div class="train-row${p.parado ? ' parked' : ''}" data-id="${esc(p.id)}">
-            <span class="tr-dot" style="background:${esc(p.color || '#facc15')}"></span>
+            <span class="tr-dot" style="background:#facc15"></span>
             <span class="tr-id">${esc(p.line)}</span>
             <div class="tr-main">
               <div class="tr-route">${esc(p.lineName || 'Linha ' + p.line)}</div>
@@ -1210,40 +1346,23 @@
       definirRecolhido(!painel.classList.contains('collapsed'));
     });
     
-    // Clique simples no título
     headerDrag.addEventListener('click', () => {
       if (window.innerWidth <= 768) definirRecolhido(!painel.classList.contains('collapsed'));
     });
 
-    // --- Lógica de Arrastar (Swipe) no Telemóvel ---
     let touchStartY = 0;
     let touchCurrentY = 0;
 
-    function onTouchStart(e) { 
-      touchStartY = e.touches[0].clientY; 
-    }
-    
-    function onTouchMove(e) { 
-      touchCurrentY = e.touches[0].clientY; 
-    }
-    
+    function onTouchStart(e) { touchStartY = e.touches[0].clientY; }
+    function onTouchMove(e) { touchCurrentY = e.touches[0].clientY; }
     function onTouchEnd() {
       if (!touchStartY || !touchCurrentY || window.innerWidth > 768) return;
-      
       const deltaY = touchCurrentY - touchStartY;
-      
-      // Margem de segurança de 40px para não disparar por acidente
-      if (deltaY > 40) {
-        definirRecolhido(true); // Arrastou para baixo -> Recolhe
-      } else if (deltaY < -40) {
-        definirRecolhido(false); // Arrastou para cima -> Expande
-      }
-      
-      touchStartY = 0; 
-      touchCurrentY = 0;
+      if (deltaY > 40) definirRecolhido(true);
+      else if (deltaY < -40) definirRecolhido(false);
+      touchStartY = 0; touchCurrentY = 0;
     }
 
-    // Lista específica das zonas onde o utilizador pode arrastar a gaveta
     const zonasDeArrasto = [
       document.querySelector('.sheet-handle'),
       document.getElementById('headerDrag'),
@@ -1255,10 +1374,8 @@
       if(el) {
         el.addEventListener('touchstart', (e) => { onTouchStart(e); }, { passive: true });
         el.addEventListener('touchmove', (e) => { 
-          // Se estiver a tocar no input de pesquisa ou na dropdow, permite o comportamento nativo
           if(e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
-          
-          e.preventDefault(); // Bloqueia o refresh da página
+          e.preventDefault(); 
           onTouchMove(e); 
         }, { passive: false });
         el.addEventListener('touchend', onTouchEnd);
@@ -1274,7 +1391,7 @@
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && popupAtual) popupAtual.remove(); });
     setInterval(atualizarLista, 1000);
 
-  function atualizarEstadoPainel() {
+    function atualizarEstadoPainel() {
       const el = document.getElementById('liveStatus'); 
       let html = '';
       
@@ -1293,7 +1410,8 @@
           ? 'Feed CP indisponível:<br>' + esc(CP.error) 
           : `<b>${CP.trains.size}</b> comboios com posição`;
       }
-      
+	  
+      el.style.setProperty('--cor-op', COR[activeOperator]);
       el.style.display = html === '' ? 'none' : 'block';
       if (el._html !== html) { el.innerHTML = html; el._html = html; }
     }
@@ -1304,13 +1422,12 @@
     }
 
     async function carregarEstacoes() {
-      if (activeOperator === 'cm') {
-        if (map.getSource('stations')) map.getSource('stations').setData({ type: 'FeatureCollection', features: [] });
-        return;
-      }
       try {
-        const res = await fetch(`${API_BASE}/api/stations?operator=${activeOperator}`);
+        const operador = activeOperator;
+        const res = await fetch(`${API_BASE}/api/stations?operator=${operador}`);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
         const stations = await res.json();
+        if (operador !== activeOperator) return;   // mudou de operador entretanto
         const geojson = {
           type: "FeatureCollection",
           features: stations.filter(s => s.lat && s.lon && !isNaN(s.lat) && !isNaN(s.lon)).map(s => ({
@@ -1320,7 +1437,10 @@
         };
         if (activeOperator === 'cp') CP.estacoes = new Map(stations.map(s => [normNome(s.name), [Number(s.lon), Number(s.lat)]]));
         if (map.getSource('stations')) map.getSource('stations').setData(geojson);
-      } catch (err) { console.error("Erro ao obter estações:", err); }
+      } catch (err) {
+        console.error("Erro ao obter estações:", err);
+        if (activeOperator === 'cm') setTimeout(carregarEstacoes, 5000);   // a lista da Carris pode ainda estar a carregar
+      }
     }
 
     function selecionarOperador(op) {
