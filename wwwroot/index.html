@@ -584,8 +584,10 @@
             const route = data.routes[0];
             map.getSource('planner-route').setData(route.geometry);
             
-            document.getElementById('plannerStats').textContent = `🚶 A pé: ${Math.round(route.duration / 60)} min (${(route.distance / 1000).toFixed(1)} km)`;
-            document.getElementById('btnMoovit').href = `https://moovitapp.com/?from=${origemLat},${origemLon}&to=${lat},${lng}`;
+			// Calcula o tempo assumindo 5 km/h (12 minutos por cada km)
+			const tempoMinutos = Math.max(1, Math.round((route.distance / 1000) * 12));
+			document.getElementById('plannerStats').textContent = `🚶 A pé: ${tempoMinutos} min (${(route.distance / 1000).toFixed(1)} km)`;
+			document.getElementById('btnMoovit').href = `https://moovitapp.com/?from=${origemLat},${origemLon}&to=${lat},${lng}`;
             document.getElementById('btnGmaps').href = `https://www.google.com/maps/dir/?api=1&origin=${origemLat},${origemLon}&destination=${lat},${lng}&travelmode=transit`;
             
             const bbox = turf.bbox(route.geometry);
