@@ -90,7 +90,7 @@
     .btn-op.active.cp { background: #a78bfa; color: #1e1038; }
 
     .live-status { font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; font-weight: 600; color: #94a3b8; line-height: 1.5; }
-	.live-status b { color: var(--cor-op, #10b981); font-size: 0.85rem; }
+    .live-status b { color: var(--cor-op, #10b981); font-size: 0.85rem; }
 
     .list-head { white-space: nowrap; display: flex; align-items: center; justify-content: space-between; gap: 8px; font-family: 'JetBrains Mono', monospace; font-size: 0.68rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: #94a3b8; }
     .list-head input, .list-head select { background: rgba(0, 0, 0, 0.45); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 8px; color: #f8fafc; font-size: 0.72rem; padding: 5px 8px; outline: none; font-family: 'Plus Jakarta Sans', sans-serif; letter-spacing: 0; text-transform: none; }
@@ -113,11 +113,35 @@
     .maplibregl-popup-content { background: rgba(14, 20, 32, 0.95) !important; border: 1px solid rgba(255, 255, 255, 0.15) !important; border-radius: 8px !important; color: #f8fafc !important; padding: 10px 14px !important; }
     .maplibregl-popup-tip { border-top-color: rgba(14, 20, 32, 0.95) !important; }
 
+    /* --- PLANEADOR DE VIAGEM (NOVO) --- */
+    #plannerBanner {
+      position: absolute; top: 90px; left: 50%; transform: translateX(-50%);
+      width: 90%; max-width: 400px; background: rgba(14, 20, 32, 0.95);
+      border: 1px solid rgba(56, 189, 248, 0.4); border-radius: 16px;
+      padding: 16px; z-index: 20; backdrop-filter: blur(14px);
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.7);
+      display: flex; flex-direction: column; gap: 12px;
+      color: #fff; transition: all 0.3s ease; opacity: 1; pointer-events: auto;
+    }
+    #plannerBanner.hidden { opacity: 0; pointer-events: none; top: 70px; }
+    .planner-header { display: flex; justify-content: space-between; align-items: flex-start; }
+    .planner-title { font-weight: 800; font-size: 0.95rem; line-height: 1.2; padding-right: 12px; }
+    .planner-close { background: none; border: none; color: #94a3b8; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 4px; border-radius: 50%; transition: background 0.2s; }
+    .planner-close:hover { background: rgba(255,255,255,0.1); color: #fff; }
+    .planner-stats { font-size: 0.8rem; color: #38bdf8; font-weight: 700; font-family: 'JetBrains Mono', monospace; }
+    .planner-actions { display: flex; gap: 8px; margin-top: 4px; }
+    .planner-btn { flex: 1; padding: 10px; text-align: center; border-radius: 10px; font-size: 0.75rem; font-weight: 800; cursor: pointer; text-decoration: none; display: flex; align-items: center; justify-content: center; gap: 6px; }
+    .btn-moovit { background: #ff6b00; color: #fff; }
+    .btn-gmaps { background: #fff; color: #1a73e8; }
+
     /* --- ADAPTAÇÃO BOTTOM SHEET (TELEMÓVEL) --- */
     @media (max-width: 768px) {
       #desktopTopTitle { display: none; }
       .title-desktop { display: none; }
       .title-mobile { display: inline; }
+      
+      #plannerBanner { top: 20px; }
+      #plannerBanner.hidden { top: 0px; }
 
       .sheet-handle {
         display: block; width: 38px; height: 4px; border-radius: 2px;
@@ -166,6 +190,21 @@
 
   <div id="desktopTopTitle">TRANSPORTES DE PORTUGAL</div>
 
+  <!-- NOVO: PAINEL DE PLANEAMENTO DE VIAGEM -->
+  <div id="plannerBanner" class="hidden">
+    <div class="planner-header">
+      <div class="planner-title" id="plannerTitle">Destino</div>
+      <button class="planner-close" onclick="fecharPlaneador()">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+      </button>
+    </div>
+    <div class="planner-stats" id="plannerStats">A calcular...</div>
+    <div class="planner-actions">
+      <a id="btnMoovit" class="planner-btn btn-moovit" target="_blank">Ver no Moovit</a>
+      <a id="btnGmaps" class="planner-btn btn-gmaps" target="_blank">Google Maps</a>
+    </div>
+  </div>
+
   <aside class="sidebar-panel collapsed" id="painelGlobal">
     <div class="sheet-handle"></div>
     <div class="brand-row" id="headerDrag">
@@ -200,6 +239,7 @@
     let activeOperator = "cp";
     const COR = { cp: '#a78bfa', fertagus: '#10b981', cm: '#facc15', estacao: '#38bdf8' };
     const PT_BOUNDS = [[-9.8, 36.8], [-6.0, 42.3]];
+    let USER_LOC = null; // Guarda a localização GPS do utilizador
 
     const paddingPT = () => {
       const mobile = window.innerWidth <= 768;
@@ -254,6 +294,16 @@
 
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right');
 
+    // NOVO: Controlo de Localização do Utilizador
+    const geolocateControl = new maplibregl.GeolocateControl({
+      positionOptions: { enableHighAccuracy: true },
+      trackUserLocation: true
+    });
+    map.addControl(geolocateControl, 'bottom-right');
+    geolocateControl.on('geolocate', (e) => {
+        USER_LOC = [e.coords.longitude, e.coords.latitude];
+    });
+
     function esconderLoader() {
       const loader = document.getElementById("appLoader");
       if (loader && !loader.classList.contains("hidden")) loader.classList.add("hidden");
@@ -270,6 +320,14 @@
         map.setLayerZoomRange('railway_minor', 1, 24);
       }
       if (map.getLayer('boundary_country')) map.setLayoutProperty('boundary_country', 'visibility', 'none');
+
+      // NOVO: Camada para desenhar o trajeto pedestre do utilizador
+      map.addSource('planner-route', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+      map.addLayer({
+          id: 'planner-route-line', type: 'line', source: 'planner-route',
+          layout: { 'line-join': 'round', 'line-cap': 'round' },
+          paint: { 'line-color': '#38bdf8', 'line-width': 5, 'line-dasharray': [1, 2] }
+      });
 
       map.addSource('fronteira-terrestre-pt', {
         type: 'geojson',
@@ -324,9 +382,9 @@
 
       map.addSource('stations', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
 
-      // ['zoom'] não pode ser usado em filtros: uma camada por tipo, cada uma com o seu minzoom
+      // A CP e Fertagus detetam cliques a partir do zoom 5 (mapa de Portugal)
       map.addLayer({
-        id: 'stations-hitbox', minzoom: 8, type: 'circle', source: 'stations',
+        id: 'stations-hitbox', minzoom: 5, type: 'circle', source: 'stations',
         filter: ['!=', ['get', 'operator'], 'cm'],
         paint: { 'circle-radius': 16, 'circle-opacity': 0 }
       });
@@ -336,24 +394,37 @@
         paint: { 'circle-radius': 12, 'circle-opacity': 0 }
       });
 
+      // Estilo limpo e exato para TODAS as estações
       map.addLayer({
-        id: 'stations-ring', minzoom: 8, type: 'circle', source: 'stations',
+        id: 'stations-ring', minzoom: 5, type: 'circle', source: 'stations',
         paint: {
-		  'circle-color': COR.estacao,
-		  'circle-stroke-width': 0,
-		  'circle-radius': [
-			'interpolate', ['linear'], ['zoom'],
-			6,    ['case', ['==', ['get', 'operator'], 'cm'], 0,   2.5],
-			9,    ['case', ['==', ['get', 'operator'], 'cm'], 1.3, 3.0],
-			10.5, ['case', ['==', ['get', 'operator'], 'cm'], 2.2, 4.0],
-			16,   ['case', ['==', ['get', 'operator'], 'cm'], 5,   6.0]
-		  ],
-		  'circle-opacity': [
-			'interpolate', ['linear'], ['zoom'],
-			8.5, ['case', ['==', ['get', 'operator'], 'cm'], 0,   1],
-			10,  ['case', ['==', ['get', 'operator'], 'cm'], 0.9, 1]
-		  ]
-		}
+          // As cores de cada marca (Azul na Carris, Roxo na CP, Verde na Fertagus)
+          'circle-color': [
+            'match', ['get', 'operator'],
+            'cp', COR.cp,
+            'fertagus', COR.fertagus,
+            COR.estacao 
+          ],
+          'circle-stroke-width': 0, // Sem rebordo em nenhuma
+
+          // O mesmo tamanho elegante para TODAS as paragens/estações
+          'circle-radius': [
+            'interpolate', ['linear'], ['zoom'],
+            5,  1.5,
+            9,  2.5,
+            12, 3.5,
+            16, 6.0
+          ],
+
+          // CORREÇÃO: Interpolate (zoom) fica no topo absoluto da regra!
+          'circle-opacity': [
+            'interpolate', ['linear'], ['zoom'],
+            // No zoom 8.5 (longe): a Carris fica invisível (0), as outras mantêm-se a 0.9
+            8.5, ['case', ['==', ['get', 'operator'], 'cm'], 0, 0.9],
+            // No zoom 10 (perto): todas as estações assumem 0.9 de opacidade
+            10,  0.9
+          ]
+        }
       });
 
       map.addLayer({
@@ -368,14 +439,23 @@
         map.on('click', camada, aoClicarEstacao);
       }
 
-	async function aoClicarEstacao(e) {
+      async function aoClicarEstacao(e) {
         const coords = e.features[0].geometry.coordinates.slice();
         const { name, code, operator } = e.features[0].properties;
         const cm = operator === 'cm';
+        const safeName = esc(name).replace(/'/g, "\\'");
 
+        // NOVO: Adicionado um botão "Ir para aqui" para chamar o Planner
         const cab = `
-          <div style="font-size:0.72rem; text-transform:uppercase; color:#94a3b8; font-weight:700;">${cm ? 'Paragem · Carris Metropolitana' : 'Estação'}</div>
-          <div style="font-size:1.05rem; font-weight:800; color:#fff; max-width:260px;">${esc(name)}</div>`;
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
+            <div>
+              <div style="font-size:0.72rem; text-transform:uppercase; color:#94a3b8; font-weight:700;">${cm ? 'Paragem · Carris Metropolitana' : 'Estação'}</div>
+              <div style="font-size:1.05rem; font-weight:800; color:#fff; max-width:220px;">${esc(name)}</div>
+            </div>
+            <button onclick="planearTrajeto(${coords[0]}, ${coords[1]}, '${safeName}')" style="background:#38bdf8; color:#0b0d13; border:none; padding:8px; border-radius:50%; cursor:pointer; flex:none; display:flex; align-items:center; justify-content:center;" title="Planear Viagem">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="3 11 22 2 13 21 11 13 3 11"></polygon></svg>
+            </button>
+          </div>`;
         const rodape = `<div style="margin-top:6px; font-size:0.7rem; color:#64748b; font-family:'JetBrains Mono',monospace;">ID: ${esc(code)}</div>`;
 
         const popup = novoPopup({ offset: 8 }).setLngLat(coords).setHTML(cab + rodape).addTo(map);
@@ -386,25 +466,19 @@
         const desenhar = () => popup.setHTML(cab + detalhes + chegadas + rodape);
         const aberto = () => popupAtual === popup;
         
-        // O Endpoint oficial da v2 que retorna as linhas e infos é a listagem gigante.
-        // O teu backend no Program.cs já tem a lista toda. Para ser rápido, vamos bater
-        // no endpoint v3 não documentado que o site deles usa para os painéis, ou no V2 realtime se ainda responder.
-        
-        // Como o `/v2/stops/{code}` dá 404, vamos passar à frente e tentar o `/v2/stops/{code}/realtime`
-        // Mas vamos embrulhar tudo com cuidado.
         desenhar();
 
-        // 2) Próximas partidas via TML Mobilidade (Carris Metropolitana)
         try {
-          // Usa o novo endpoint que descobriste
-          const urlTML = cm ? `https://go.tmlmobilidade.pt/hub/api/v1/eta/by-stop/${encodeURIComponent(code)}` : base + '/realtime';
+          const urlTML = cm ? `https://go.tmlmobilidade.pt/hub/api/v1/eta/by-stop/${encodeURIComponent(code)}` : `https://api.carrismetropolitana.pt/v2/stops/${encodeURIComponent(code)}/realtime`;
           const res = await fetch(urlTML);
           
-          if (!res.ok) throw new Error('HTTP ' + res.status);
+          if (!res.ok) {
+             if (res.status === 404) throw new Error('Sem tempo real');
+             throw new Error('HTTP ' + res.status);
+          }
           const data = await res.json();
           if (!aberto()) return;
 
-          // A nova API TML guarda os autocarros no array "data"
           let prox = [];
           if (cm) {
               prox = (Array.isArray(data.data) ? data.data : [])
@@ -422,7 +496,6 @@
           if (!prox.length) {
             chegadas = `<div style="margin-top:8px; font-size:0.75rem; color:#64748b;">Sem partidas previstas a curto prazo.</div>`;
           } else {
-            // Extrai as linhas únicas a partir do trip_id para as etiquetas superiores
             if (cm && !detalhes) {
                 const linhasUnicas = [...new Set(prox.map(p => {
                     const m = p.trip_id ? p.trip_id.match(/(\d{4})/) : null;
@@ -442,15 +515,12 @@
               let min = 0, line_id = '', destino = '', quando = '';
               
               if (cm) {
-                  // Lógica API TML
                   min = Math.floor(b.eta_seconds / 60);
                   quando = min <= 0 ? `<span style="color:${COR.cm}; font-weight:700;">A chegar</span>` : `em ${min} min`;
-                  // O trip_id tem este formato: "[ZLLEW][A2L1N]4436_0_1|600|1100" -> extraímos os 4 algarismos da linha
                   const m = b.trip_id ? b.trip_id.match(/(\d{4})/) : null;
                   line_id = m ? m[1] : 'BUS';
-                  destino = `Carreira ${line_id}`; // API TML não fornece o headsign, usamos o número da carreira
+                  destino = `Carreira ${line_id}`;
               } else {
-                  // Lógica Antiga (CP/Outros)
                   min = Math.floor((b.t - agora) / 60);
                   const hora = new Date(b.t * 1000).toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Lisbon' });
                   quando = min <= 0 ? `<span style="color:${COR.cm}; font-weight:700;">A chegar</span>` : min < 60 ? `em ${min} min` : hora;
@@ -469,7 +539,6 @@
             }).join('') + `</div>`;
           }
         } catch (err) {
-          console.error('Partidas da paragem:', err);
           chegadas = `<div style="margin-top:8px; font-size:0.75rem; color:#64748b;">Paragem sem estimativas disponíveis.</div>`;
         }
         
@@ -483,6 +552,81 @@
       await carregarEstacoes();
       esconderLoader();
     });
+
+    window.planearTrajeto = function(lng, lat, name) {
+      
+      // PLANO B: Se não houver GPS, abre o painel na mesma só com os botões!
+      const abrirPainelSemGPS = () => {
+        document.getElementById('plannerTitle').textContent = `Para ${name}`;
+        document.getElementById('plannerStats').textContent = `GPS indisponível. Abre na App:`;
+        
+        // Passamos apenas o destino. O Moovit/Gmaps descobre a origem sozinho.
+        document.getElementById('btnMoovit').href = `https://moovitapp.com/?to=${lat},${lng}`;
+        document.getElementById('btnGmaps').href = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}&travelmode=transit`;
+        
+        document.getElementById('plannerBanner').classList.remove('hidden');
+        if (popupAtual) popupAtual.remove();
+      };
+
+      // PLANO A: Temos GPS, desenhamos a rota a pé e damos os tempos
+      const calcularEMostrar = async (origemLon, origemLat) => {
+        try {
+          document.getElementById('plannerTitle').textContent = `Para ${name}`;
+          document.getElementById('plannerStats').textContent = `A calcular trajeto...`;
+          document.getElementById('plannerBanner').classList.remove('hidden');
+          if (popupAtual) popupAtual.remove();
+
+          const url = `https://router.project-osrm.org/route/v1/foot/${origemLon},${origemLat};${lng},${lat}?geometries=geojson`;
+          const res = await fetch(url);
+          const data = await res.json();
+
+          if (data.routes && data.routes.length > 0) {
+            const route = data.routes[0];
+            map.getSource('planner-route').setData(route.geometry);
+            
+            document.getElementById('plannerStats').textContent = `🚶 A pé: ${Math.round(route.duration / 60)} min (${(route.distance / 1000).toFixed(1)} km)`;
+            document.getElementById('btnMoovit').href = `https://moovitapp.com/?from=${origemLat},${origemLon}&to=${lat},${lng}`;
+            document.getElementById('btnGmaps').href = `https://www.google.com/maps/dir/?api=1&origin=${origemLat},${origemLon}&destination=${lat},${lng}&travelmode=transit`;
+            
+            const bbox = turf.bbox(route.geometry);
+            map.fitBounds(bbox, { padding: paddingPT(), maxZoom: 15 });
+          } else {
+            abrirPainelSemGPS();
+          }
+        } catch(e) {
+          console.error("Erro a gerar trajeto", e);
+          abrirPainelSemGPS();
+        }
+      };
+
+      // VERIFICAÇÃO DO GPS
+      if (!USER_LOC) {
+        if (!navigator.geolocation) {
+           abrirPainelSemGPS(); // O Browser bloqueia o GPS (ex: HTTP local)
+           return;
+        }
+        
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            USER_LOC = [pos.coords.longitude, pos.coords.latitude];
+            try { geolocateControl.trigger(); } catch(e){} // Tenta ligar a bolinha azul
+            calcularEMostrar(USER_LOC[0], USER_LOC[1]);
+          },
+          (err) => {
+            console.warn("GPS falhou ou foi negado. A ativar Plano B.", err);
+            abrirPainelSemGPS(); // GPS desligado/negado: Ativa Plano B!
+          },
+          { enableHighAccuracy: true, timeout: 5000 } // Desiste de procurar GPS ao fim de 5 segundos
+        );
+      } else {
+        calcularEMostrar(USER_LOC[0], USER_LOC[1]);
+      }
+    };
+
+    window.fecharPlaneador = function() {
+      document.getElementById('plannerBanner').classList.add('hidden');
+      map.getSource('planner-route').setData({ type: 'FeatureCollection', features: [] });
+    };
 
     const FRAME_MS = 1000 / 30;
 
@@ -555,7 +699,7 @@
       map.addLayer({
         id: 'fertagus-track-line', type: 'line', source: 'fertagus-track',
         layout: { 'line-join': 'round', 'line-cap': 'round', visibility: 'none' },
-        paint: { 'line-color': '#10b981', 'line-width': 2.5, 'line-opacity': 0.55 }
+        paint: { 'line-color': '#10b981', 'line-width': 2.5, 'line-opacity': 0.00 }
       });
 
       criarIconeSeta();
@@ -564,7 +708,7 @@
         id: 'fertagus-trains-halo', type: 'circle', source: 'fertagus-trains', layout: { visibility: 'none' },
         paint: {
           'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 9, 14, 15],
-		  'circle-color': COR.fertagus,
+          'circle-color': COR.fertagus,
           'circle-opacity': ['case', ['==', ['get', 'estac'], 1], 0.5, 0.95],
           'circle-stroke-width': 2, 'circle-stroke-color': '#06080e'
         }
@@ -790,8 +934,8 @@
         id: 'cm-trains-halo', type: 'circle', source: 'cm-trains', layout: { visibility: 'none' },
         paint: {
           'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 3.5, 12, 7, 15, 11],
-		  'circle-color': COR.cm,
-		  'circle-stroke-width': 2, 'circle-stroke-color': '#06080e',
+          'circle-color': COR.cm,
+          'circle-stroke-width': 2, 'circle-stroke-color': '#06080e',
           'circle-opacity': ['case', ['==', ['get', 'parado'], 1], 0.6, 1]
         }
       });
@@ -998,7 +1142,6 @@
         if (src) src.setData({ type: 'FeatureCollection', features: CM.features });
       }
     }
-
 
     // =====================================================================
     // RADAR CP
