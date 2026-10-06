@@ -104,11 +104,21 @@ var stationByCode = allStations.Where(s => !string.IsNullOrEmpty(s.Code))
     return (ParseCoord(st.Latitude), ParseCoord(st.Longitude), st.Designation);
 }
 
-app.MapGet("/api/stations", (string? @operator, HttpContext ctx) =>
+app.MapGet("/api/stations", async (string? @operator, HttpContext ctx, IHttpClientFactory f, IMemoryCache cache) =>
 {
-    ctx.Response.Headers.CacheControl = "public, max-age=600";
     var op = (@operator ?? "fertagus").ToLower();
 
+    if (op == "cm") 
+    {
+        var stops = await CmStops(f, cache);
+        if (stops.Count == 0)   // ainda a carregar ou falhou: não deixar o navegador guardar uma lista vazia
+            return Results.Problem("As paragens da Carris ainda não estão carregadas (ver /api/buses/status).", statusCode: 503);
+        ctx.Response.Headers.CacheControl = "public, max-age=600";
+        var cmStationsOut = stops.Select(s => new { code = s.Key, name = s.Value.Name, lat = s.Value.Lat, lon = s.Value.Lon }).ToList();
+        return Results.Ok(cmStationsOut);
+    }
+    
+    ctx.Response.Headers.CacheControl = "public, max-age=600";
     if (op == "fertagus") return Results.Ok(ftStationsOut);
     return Results.Ok(cpStationsOut);
 });
@@ -237,17 +247,15 @@ app.MapGet("/api/trains/cp", async (IHttpClientFactory httpFactory, IMemoryCache
     }
 });
 
-// Paragens (estações) do comboio, se o feed as trouxer
-var rail = new RailGraph();   // tem de ser declarado antes de ser usado no endpoint
+var rail = new RailGraph();
 
 app.MapGet("/api/trains/cp/{id}/stops", (string id) =>
 {
     var stops = cpStops.TryGetValue(id, out var st) ? st : new List<CpStopDto>();
-    var route = rail.Route(stops);   // null enquanto o grafo não estiver pronto -> o cliente usa linhas retas
+    var route = rail.Route(stops);
     return Results.Ok(new { stops, path = route?.Path, stopAt = route?.At, railStatus = rail.Status });
 });
 
-// Grafo ferroviário (OpenStreetMap): carrega em segundo plano, não atrasa o arranque
 var railPath = Path.Combine(app.Environment.ContentRootPath, app.Configuration["RailGraph:Path"] ?? "rail_pt.json");
 _ = Task.Run(async () =>
 {
@@ -257,7 +265,7 @@ _ = Task.Run(async () =>
 });
 
 // =========================================================================
-// CARRIS METROPOLITANA (API v2 pública): autocarros em tempo real + percurso de cada padrão
+// CARRIS METROPOLITANA
 // =========================================================================
 const string CmBase = "https://api.carrismetropolitana.pt/v2";
 var cmLock = new SemaphoreSlim(1, 1);
@@ -267,7 +275,7 @@ string? cmLastError = null;
 async Task<string> CmGet(IHttpClientFactory f, string path)
 {
     var client = f.CreateClient();
-    client.Timeout = TimeSpan.FromSeconds(90);   // /stops é grande
+    client.Timeout = TimeSpan.FromSeconds(90);
     client.DefaultRequestHeaders.UserAgent.ParseAdd("ComboiosApp/1.0");
     return await client.GetStringAsync(CmBase + path);
 }
@@ -285,7 +293,7 @@ async Task<Dictionary<string, CmLine>> CmLines(IHttpClientFactory f, IMemoryCach
     {
         cmLastError = "linhas: " + ex.Message;
         Console.WriteLine($"[CM] linhas: {ex.Message}");
-        cache.Set("cm_lines", d, TimeSpan.FromMinutes(2));   // tenta de novo dentro de 2 min
+        cache.Set("cm_lines", d, TimeSpan.FromMinutes(2));
     }
     return d;
 }
@@ -339,7 +347,6 @@ app.MapGet("/api/buses/vehicles", async (IHttpClientFactory f, IMemoryCache cach
     }
 });
 
-// Paragens de um padrão, para mostrar as que faltam ao autocarro selecionado
 app.MapGet("/api/buses/pattern/{id}", async (string id, IHttpClientFactory f, IMemoryCache cache) =>
 {
     if (!System.Text.RegularExpressions.Regex.IsMatch(id, "^[A-Za-z0-9_\\[\\]-]{1,80}$")) return Results.BadRequest();
@@ -348,7 +355,6 @@ app.MapGet("/api/buses/pattern/{id}", async (string id, IHttpClientFactory f, IM
     try
     {
         var stopDict = await CmStops(f, cache);
-        // o id do feed pode trazer prefixos de versão, como "[AAAAA][BBBBB]4543_0_1": tenta o completo e depois sem prefixos
         var curto = System.Text.RegularExpressions.Regex.Replace(id, @"^(\[[^\]]*\])+", "");
         var candidatos = curto != id && curto.Length > 0 ? new[] { id, curto } : new[] { id };
         CmPatternRaw? pat = null;
@@ -369,7 +375,13 @@ app.MapGet("/api/buses/pattern/{id}", async (string id, IHttpClientFactory f, IM
         }
         if (pat == null || pat.Stops.Count == 0)
             return Results.Problem($"Sem paragens para o padrão {id}" + (ultimo != null ? ": " + ultimo.Message : ""), statusCode: 502);
-        var dto = new CmPatternDto(pat.Headsign, pat.Stops);
+        List<double[]>? path = null;
+        if (!string.IsNullOrEmpty(pat.ShapeId))
+        {
+            try { path = CmFeed.ParseShape(await CmGet(f, "/shapes/" + Uri.EscapeDataString(pat.ShapeId))); }
+            catch (Exception ex) { Console.WriteLine($"[CM] forma {pat.ShapeId}: {ex.Message}"); }
+        }
+        var dto = new CmPatternDto(pat.Headsign, pat.Stops, path);
         cache.Set(key, dto, TimeSpan.FromHours(6));
         return Results.Ok(dto);
     }
@@ -379,7 +391,6 @@ app.MapGet("/api/buses/pattern/{id}", async (string id, IHttpClientFactory f, IM
     }
 });
 
-// Diagnóstico: quantas linhas/paragens foram carregadas e o último erro
 app.MapGet("/api/buses/status", async (IHttpClientFactory f, IMemoryCache cache) =>
 {
     var lines = await CmLines(f, cache);
@@ -387,7 +398,6 @@ app.MapGet("/api/buses/status", async (IHttpClientFactory f, IMemoryCache cache)
     return Results.Ok(new { lines = lines.Count, stops = stops.Count, lastError = cmLastError });
 });
 
-// Aquece as listas de linhas e paragens em segundo plano (o primeiro pedido não espera por elas)
 _ = Task.Run(async () =>
 {
     try
@@ -476,7 +486,6 @@ public static class CpFeed
         return list;
     }
 
-    // O feed não traz rumo: usa a direção do troço de paragens mais próximo (segue o sentido real da linha)
     static double? HeadingFromStops(double lat, double lon, List<CpStopDto> stops)
     {
         if (stops.Count < 2) return null;
@@ -639,7 +648,6 @@ public static class CpFeed
 
 public record RailRoute(List<double[]> Path, List<int> At);
 
-// Linhas férreas de Portugal (railway=rail do OpenStreetMap) como grafo; liga paragens seguindo a via
 public sealed class RailGraph
 {
     double[] _lat = Array.Empty<double>(), _lon = Array.Empty<double>();
@@ -654,13 +662,12 @@ public sealed class RailGraph
         try
         {
             var geo = Path.Combine(Path.GetDirectoryName(path) ?? "", "export.geojson");
-            if (!File.Exists(path) && File.Exists(geo)) path = geo;   // exportação manual do Overpass Turbo
+            if (!File.Exists(path) && File.Exists(geo)) path = geo; 
 
             if (!File.Exists(path))
             {
                 Status = "a descarregar as linhas do OpenStreetMap (1-2 min)";
                 const string q = "[out:json][timeout:300];area[\"ISO3166-1\"=\"PT\"][admin_level=2]->.pt;way[\"railway\"=\"rail\"][!\"service\"](area.pt);out geom;";
-                // O Overpass recusa (406) pedidos sem User-Agent identificável
                 http.DefaultRequestHeaders.UserAgent.ParseAdd("ComboiosApp/1.0 (live train tracker)");
                 http.DefaultRequestHeaders.Accept.ParseAdd("*/*");
                 string[] servidores =
@@ -695,7 +702,7 @@ public sealed class RailGraph
             Build(await File.ReadAllBytesAsync(path));
             if (_lat.Length == 0)
             {
-                if (!path.EndsWith(".geojson", StringComparison.OrdinalIgnoreCase)) File.Delete(path);   // resposta vazia do Overpass
+                if (!path.EndsWith(".geojson", StringComparison.OrdinalIgnoreCase)) File.Delete(path); 
                 throw new Exception("o ficheiro de linhas veio vazio (apagado)");
             }
             Ready = true;
@@ -736,7 +743,6 @@ public sealed class RailGraph
             foreach (var c in line.EnumerateArray())
             {
                 double lo = c[0].GetDouble(), la = c[1].GetDouble();
-                // nós partilhados entre vias têm coordenadas idênticas
                 var key = (long)Math.Round(la * 1e7) * 1_000_000_000L + (long)Math.Round((lo + 20) * 1e7);
                 var cur = GetNode(key, la, lo);
                 if (prev >= 0 && prev != cur)
@@ -751,7 +757,6 @@ public sealed class RailGraph
 
         if (doc.RootElement.TryGetProperty("features", out var features))
         {
-            // GeoJSON (exportação do Overpass Turbo)
             foreach (var f in features.EnumerateArray())
             {
                 if (!f.TryGetProperty("geometry", out var g) || g.ValueKind != JsonValueKind.Object) continue;
@@ -824,12 +829,12 @@ public sealed class RailGraph
             {
                 seg = Shortest(cands[i - 1], cands[i]);
                 var reta = Dist(stops[i - 1].Lat, stops[i - 1].Lon, stops[i].Lat, stops[i].Lon);
-                if (seg != null && Length(seg) > 2.2 * reta + 3000) seg = null;   // desvio absurdo: via desligada no mapa
+                if (seg != null && Length(seg) > 2.2 * reta + 3000) seg = null; 
             }
 
             if (seg != null) foreach (var n in seg) AddPt(path, Pt(_lat[n], _lon[n]));
             else if (i == 0 && cands[0].Count > 0) AddPt(path, Pt(_lat[cands[0][0].N], _lon[cands[0][0].N]));
-            else AddPt(path, Pt(stops[i].Lat, stops[i].Lon));   // sem via: segmento reto
+            else AddPt(path, Pt(stops[i].Lat, stops[i].Lon));
             at.Add(path.Count - 1);
         }
         return new RailRoute(path, at);
@@ -858,7 +863,6 @@ public sealed class RailGraph
         return t;
     }
 
-    // Vários nós perto da estação (ex.: várias vias): evita ficar preso numa via desligada do resto
     List<(double D, int N)> Candidates(double lat, double lon, double maxM = 150, int max = 25)
     {
         var (cy, cx) = Cell(lat, lon);
@@ -877,7 +881,6 @@ public sealed class RailGraph
         return res;
     }
 
-    // Dijkstra de várias origens para vários destinos
     List<int>? Shortest(List<(double D, int N)> srcs, List<(double D, int N)> tgts)
     {
         var g = new Dictionary<int, double>();
@@ -924,9 +927,8 @@ public record CmVehicleDto(
     string? Pattern, string? Status, string? Stop, string? StopName, string? Occupancy, bool Stopped);
 public record CmStopDto(string? Id, string Name, double Lat, double Lon);
 public record CmPatternRaw(string? ShapeId, string? Headsign, List<CmStopDto> Stops);
-public record CmPatternDto(string? Headsign, List<CmStopDto> Stops);
+public record CmPatternDto(string? Headsign, List<CmStopDto> Stops, List<double[]>? Path);
 
-// Leitor tolerante da API v2 da Carris Metropolitana (a estrutura pode evoluir)
 public static class CmFeed
 {
     static string? S(JsonElement el, params string[] keys) => CpFeed.Str(CpFeed.Direct(el, keys));
@@ -968,7 +970,7 @@ public static class CmFeed
         {
             if (el.ValueKind != JsonValueKind.Object) continue;
             var id = S(el, "id", "stop_id");
-            var name = S(el, "long_name") ?? S(el, "name", "stop_name") ?? S(el, "short_name");
+            var name = S(el, "long_name") ?? S(el, "name", "stop_name") ?? S(el, "short_name") ?? id;
             var lat = N(el, "lat", "stop_lat", "latitude");
             var lon = N(el, "lon", "stop_lon", "longitude");
             if (id != null && name != null && lat != null && lon != null) d[id] = new CmStopInfo(name, lat.Value, lon.Value);
@@ -991,13 +993,13 @@ public static class CmFeed
             var lon = N(el, "lon", "lng", "longitude");
             var id = S(el, "id");
             if (lat == null || lon == null || id == null) continue;
-            if (lat < 36.8 || lat > 39.6 || lon < -10.0 || lon > -7.3) continue;   // área metropolitana de Lisboa e arredores
+            if (lat < 36.8 || lat > 39.6 || lon < -10.0 || lon > -7.3) continue;
 
             var ts = N(el, "timestamp");
             if (ts != null)
             {
                 var t = ts.Value > 1e12 ? ts.Value / 1000 : ts.Value;
-                if (agora - t > 20 * 60) continue;   // posição parada há mais de 20 min: veículo fora de serviço
+                if (agora - t > 20 * 60) continue; 
             }
 
             var speed = N(el, "speed");
@@ -1033,8 +1035,7 @@ public static class CmFeed
         var ver = root;
         if (root.ValueKind == JsonValueKind.Array)
         {
-            // várias versões do padrão: a que tem o id pedido, senão a válida hoje, senão a primeira
-            var hoje = DateTime.Now.ToString("yyyyMMdd");   // valid_on vem como "20250705"
+            var hoje = DateTime.Now.ToString("yyyyMMdd"); 
             JsonElement? pick = null;
             var score = -1;
             foreach (var e in root.EnumerateArray())
@@ -1080,5 +1081,32 @@ public static class CmFeed
             stops.Add((seq, new CmStopDto(sid, name ?? "", lat.Value, lon.Value)));
         }
         return new CmPatternRaw(shapeId, headsign, stops.OrderBy(x => x.Seq).Select(x => x.Stop).ToList());
+    }
+
+    // Forma do percurso (GeoJSON LineString) -> [[lon,lat],...]
+    public static List<double[]>? ParseShape(string raw)
+    {
+        using var doc = JsonDocument.Parse(raw);
+        var c = FindCoords(doc.RootElement, 0);
+        return c?.Select(p => new[] { Math.Round(p[0], 5), Math.Round(p[1], 5) }).ToList();
+    }
+
+    static List<double[]>? FindCoords(JsonElement e, int depth)
+    {
+        if (depth > 5 || e.ValueKind != JsonValueKind.Object) return null;
+        foreach (var p in e.EnumerateObject())
+        {
+            var v = p.Value;
+            if (p.Name.Equals("coordinates", StringComparison.OrdinalIgnoreCase) && v.ValueKind == JsonValueKind.Array &&
+                v.GetArrayLength() > 1 && v[0].ValueKind == JsonValueKind.Array && v[0].GetArrayLength() >= 2 &&
+                v[0][0].ValueKind == JsonValueKind.Number)
+                return v.EnumerateArray().Select(c => new[] { c[0].GetDouble(), c[1].GetDouble() }).ToList();
+        }
+        foreach (var p in e.EnumerateObject())
+        {
+            var r = FindCoords(p.Value, depth + 1);
+            if (r != null) return r;
+        }
+        return null;
     }
 }
