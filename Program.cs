@@ -126,7 +126,6 @@ app.MapGet("/api/stations", async (string? @operator, HttpContext ctx, IHttpClie
 string? fertagusTrackJson = null;
 app.MapGet("/api/tracks/fertagus", async (HttpContext ctx) =>
 {
-    ctx.Response.Headers.CacheControl = "public, max-age=3600";
     if (fertagusTrackJson == null)
     {
         var trackPath = Path.Combine(app.Environment.ContentRootPath, "fertagus_track.json");
@@ -134,15 +133,19 @@ app.MapGet("/api/tracks/fertagus", async (HttpContext ctx) =>
             return Results.NotFound(new { message = "Ficheiro fertagus_track.json não encontrado." });
         fertagusTrackJson = await File.ReadAllTextAsync(trackPath);
     }
+	ctx.Response.Headers.CacheControl = "public, max-age=3600";
     return Results.Content(fertagusTrackJson, "application/json");
 });
 
 object? fertagusScheduleCache = null;
 app.MapGet("/api/trains/fertagus/schedule", async (HttpContext ctx) =>
 {
-    ctx.Response.Headers.CacheControl = "public, max-age=3600";
-    if (fertagusScheduleCache != null) return Results.Ok(fertagusScheduleCache);
-
+    if (fertagusScheduleCache != null)
+	{
+		ctx.Response.Headers.CacheControl = "public, max-age=3600";
+		return Results.Ok(fertagusScheduleCache);
+	}
+	
     var root = app.Environment.ContentRootPath;
     var files = new[]
     {
@@ -164,7 +167,11 @@ app.MapGet("/api/trains/fertagus/schedule", async (HttpContext ctx) =>
                 if (!fertagusStationKeys.ContainsKey(prop.Name)) continue;
                 if (prop.Value.ValueKind != JsonValueKind.String) continue;
                 var parts = prop.Value.GetString()!.Split(':');
-                var secs = int.Parse(parts[0]) * 3600 + int.Parse(parts[1]) * 60;
+                
+                // Validação defensiva (evita rebentar com formatos malucos)
+                if (parts.Length < 2 || !int.TryParse(parts[0], out var hh) || !int.TryParse(parts[1], out var mm)) continue;
+                
+                var secs = hh * 3600 + mm * 60;
                 if (last >= 0 && secs + offset < last) offset += 86400;
                 secs += offset;
                 last = secs;
@@ -184,19 +191,22 @@ app.MapGet("/api/trains/fertagus/schedule", async (HttpContext ctx) =>
         }
     }
 
-    var byCode = allStations.ToDictionary(s => s.Code, s => s, StringComparer.OrdinalIgnoreCase);
-    var inv = System.Globalization.CultureInfo.InvariantCulture;
     var stationsOut = new Dictionary<string, object>();
     foreach (var (key, code) in fertagusStationKeys)
     {
-        if (!byCode.TryGetValue(code, out var st)) continue;
-        stationsOut[key] = new
-        {
-            name = st.Designation,
-            lat = double.Parse(st.Latitude, System.Globalization.NumberStyles.Any, inv),
-            lon = double.Parse(st.Longitude, System.Globalization.NumberStyles.Any, inv)
-        };
+        if (!stationByCode.TryGetValue(code, out var st)) continue;
+
+        var lat = ParseCoord(st.Latitude);
+        var lon = ParseCoord(st.Longitude);
+        if (lat == 0 || lon == 0) continue; 
+
+        stationsOut[key] = new { name = st.Designation, lat, lon };
     }
+
+    if (trips.Count == 0 || stationsOut.Count == 0)
+	{
+        return Results.Problem("Horários ou estações da Fertagus indisponíveis.", statusCode: 503);
+	}
 
     fertagusScheduleCache = new { stations = stationsOut, trips };
     return Results.Ok(fertagusScheduleCache);
@@ -212,12 +222,21 @@ app.MapGet("/api/trains/cp", async (IHttpClientFactory httpFactory, IMemoryCache
     if (string.IsNullOrWhiteSpace(url))
         return Results.Problem("CpRealtime:Url não está configurado em appsettings.json.", statusCode: 503);
 
+    // Negative Cache - se estivermos em modo de falha contínua
+    if (cache.TryGetValue("cp_fail", out string? falhaRecente))
+        return cpLastGood != null ? Results.Ok(cpLastGood)
+                                  : Results.Problem("Feed CP indisponível: " + falhaRecente, statusCode: 502);
+
     if (cache.TryGetValue("cp_trains", out List<CpTrainDto>? cached) && cached != null)
         return Results.Ok(cached);
 
     await cpLock.WaitAsync();
     try
     {
+        // Re-verificar locks
+        if (cache.TryGetValue("cp_fail", out falhaRecente))
+            return cpLastGood != null ? Results.Ok(cpLastGood) : Results.Problem("Feed CP indisponível.", statusCode: 502);
+            
         if (cache.TryGetValue("cp_trains", out cached) && cached != null)
             return Results.Ok(cached);
 
@@ -228,8 +247,11 @@ app.MapGet("/api/trains/cp", async (IHttpClientFactory httpFactory, IMemoryCache
         var raw = await client.GetStringAsync(url);
         var seconds = !string.Equals(cfg["CpRealtime:DelayUnit"], "minutes", StringComparison.OrdinalIgnoreCase);
         var stopsNovas = new Dictionary<string, List<CpStopDto>>();
+        
+        // Passa a buscar o parser mais inteligente (shallow)
         var trains = CpFeed.Parse(raw, seconds, LookupStation, stopsNovas);
         cpStops = stopsNovas;
+        
         var ttl = cfg.GetValue<int>("CpRealtime:CacheSeconds", 10);
         cache.Set("cp_trains", trains, TimeSpan.FromSeconds(ttl));
         cpLastGood = trains;
@@ -238,6 +260,10 @@ app.MapGet("/api/trains/cp", async (IHttpClientFactory httpFactory, IMemoryCache
     }
     catch (Exception ex)
     {
+        Console.WriteLine($"[CP] feed erro: {ex.Message}");
+        // Aplica o Negative Cache durante 5 segundos para não espancar o servidor CP
+        cache.Set("cp_fail", ex.Message, TimeSpan.FromSeconds(cfg.GetValue<int>("CpRealtime:FailCacheSeconds", 5)));
+        
         if (cpLastGood != null) return Results.Ok(cpLastGood);
         return Results.Problem("Falha ao obter o feed CP: " + ex.Message, statusCode: 502);
     }
@@ -318,12 +344,20 @@ async Task<Dictionary<string, CmStopInfo>> CmStops(IHttpClientFactory f, IMemory
 
 app.MapGet("/api/buses/vehicles", async (IHttpClientFactory f, IMemoryCache cache, IConfiguration cfg) =>
 {
+    if (cache.TryGetValue("cm_fail", out string? falhaCm))
+        return cmLastGood != null ? Results.Ok(cmLastGood)
+                                  : Results.Problem("Feed Carris indisponível: " + falhaCm, statusCode: 502);
+
     if (cache.TryGetValue("cm_vehicles", out List<CmVehicleDto>? cached) && cached != null)
         return Results.Ok(cached);
 
     await cmLock.WaitAsync();
     try
     {
+        if (cache.TryGetValue("cm_fail", out falhaCm))
+            return cmLastGood != null ? Results.Ok(cmLastGood)
+                                      : Results.Problem("Feed Carris indisponível.", statusCode: 502);
+
         if (cache.TryGetValue("cm_vehicles", out cached) && cached != null)
             return Results.Ok(cached);
 
@@ -338,6 +372,7 @@ app.MapGet("/api/buses/vehicles", async (IHttpClientFactory f, IMemoryCache cach
     catch (Exception ex)
     {
         Console.WriteLine($"[CM] veículos: {ex.Message}");
+        cache.Set("cm_fail", ex.Message, TimeSpan.FromSeconds(cfg.GetValue<int>("CarrisRealtime:FailCacheSeconds", 5)));
         if (cmLastGood != null) return Results.Ok(cmLastGood);
         return Results.Problem("Falha ao obter o feed da Carris Metropolitana: " + ex.Message, statusCode: 502);
     }
@@ -448,43 +483,59 @@ public static class CpFeed
     static readonly string[] OriginKeys = { "origin", "trainOrigin", "from" };
     static readonly string[] DestKeys = { "destination", "trainDestination", "to" };
 
-    public static List<CpTrainDto> Parse(string raw, bool delayInSeconds,
-        Func<string, (double, double, string)?> lookup, Dictionary<string, List<CpStopDto>> stopsOut)
-    {
-        var list = new List<CpTrainDto>();
-        using var doc = JsonDocument.Parse(raw);
-        var arr = FindArray(doc.RootElement, 0);
-        if (arr == null) return list;
+    public static List<CpTrainDto> Parse(string raw, bool delayInSeconds, Func<string, (double, double, string)?> lookup, Dictionary<string, List<CpStopDto>> stopsOut)
+	{
+		var list = new List<CpTrainDto>();
+		using var doc = JsonDocument.Parse(raw);
+		var arr = FindArray(doc.RootElement, 0);
+		if (arr == null) return list;
 
-        foreach (var el in arr.Value.EnumerateArray())
-        {
-            if (el.ValueKind != JsonValueKind.Object) continue;
+		foreach (var el in arr.Value.EnumerateArray())
+		{
+			if (el.ValueKind != JsonValueKind.Object) continue;
 
-            var lat = Num(Find(el, LatKeys, true));
-            var lon = Num(Find(el, LonKeys, true));
-            if (lat == null || lon == null) continue;
-            if (lat < 36.8 || lat > 42.3 || lon < -9.7 || lon > -6.0) continue;
+			var lat = Num(Get(el, "data", "status", "latitude")) ?? Num(Get(el, "fixed", "latitude"));
+			var lon = Num(Get(el, "data", "status", "longitude")) ?? Num(Get(el, "fixed", "longitude"));
+			if (lat == null || lon == null) continue;
+			if (lat < 36.8 || lat > 42.3 || lon < -9.7 || lon > -6.0) continue;
 
-            var delayRaw = Num(Find(el, DelayKeys, true));
-            var delayMin = 0;
-            if (delayRaw != null)
-                delayMin = Math.Max(0, (int)Math.Round(delayInSeconds ? delayRaw.Value / 60.0 : delayRaw.Value));
+			// data.status.delay = segundos; fixed.delay = minutos
+			var delaySec = Num(Get(el, "data", "status", "delay"));
+			var delayMin = delaySec != null
+				? (int)Math.Round(delaySec.Value / 60.0)
+				: (int)Math.Round(Num(Get(el, "fixed", "delay")) ?? 0);
+			delayMin = Math.Max(0, delayMin);
 
-            var id = Str(Find(el, IdKeys, false)) ?? list.Count.ToString();
-            var stops = ExtractStops(el, lookup);
-            if (stops.Count > 1) stopsOut[id] = stops;
+			var id = Str(Get(el, "train_id"))
+				  ?? Str(Get(el, "data", "status", "trainNumber"))
+				  ?? list.Count.ToString();
 
-            list.Add(new CpTrainDto(
-                id,
-                lat.Value, lon.Value,
-                Num(Find(el, HeadingKeys, true)) ?? HeadingFromStops(lat.Value, lon.Value, stops),
-                delayMin,
-                Str(Find(el, ServiceKeys, false)),
-                Str(Find(el, OriginKeys, false)),
-                Str(Find(el, DestKeys, false))));
-        }
-        return list;
-    }
+			var stops = ExtractStops(el, lookup);
+			if (stops.Count > 1) stopsOut[id] = stops;
+
+			list.Add(new CpTrainDto(
+				id,
+				lat.Value, lon.Value,
+				HeadingFromStops(lat.Value, lon.Value, stops),
+				delayMin,
+				Str(Get(el, "db", "trainService", "designation")) ?? Str(Get(el, "fixed", "trainService", "designation")),
+				Str(Get(el, "db", "trainOrigin", "designation")) ?? Str(Get(el, "fixed", "trainOrigin", "designation")),
+				Str(Get(el, "db", "trainDestination", "designation")) ?? Str(Get(el, "fixed", "trainDestination", "designation"))));
+		}
+		return list;
+	}
+
+	// Navega por um caminho fixo; devolve null se faltar ou se for null no JSON
+	static JsonElement? Get(JsonElement e, params string[] keys)
+	{
+		var cur = e;
+		foreach (var k in keys)
+		{
+			if (cur.ValueKind != JsonValueKind.Object || !cur.TryGetProperty(k, out var next)) return null;
+			cur = next;
+		}
+		return cur.ValueKind == JsonValueKind.Null ? null : cur;
+	}
 
     static double? HeadingFromStops(double lat, double lon, List<CpStopDto> stops)
     {
@@ -510,31 +561,35 @@ public static class CpFeed
     }
 
     static List<CpStopDto> ExtractStops(JsonElement train, Func<string, (double, double, string)?> lookup)
-    {
-        var result = new List<CpStopDto>();
-        var arr = FindNamedArray(train, 0);
-        if (arr == null) return result;
+	{
+		var result = new List<CpStopDto>();
+		var arr = Get(train, "fixed", "trainStops");
+		if (arr == null || arr.Value.ValueKind != JsonValueKind.Array) return result;
 
-        foreach (var s in arr.Value.EnumerateArray())
-        {
-            if (s.ValueKind != JsonValueKind.Object) continue;
-            var lat = Num(Find(s, LatKeys, true));
-            var lon = Num(Find(s, LonKeys, true));
-            var name = Str(Find(s, StopNameKeys, false));
+		foreach (var s in arr.Value.EnumerateArray())
+		{
+			if (s.ValueKind != JsonValueKind.Object) continue;
 
-            if (lat == null || lon == null)
-            {
-                var code = Str(Find(s, StopCodeKeys, false));
-                var hit = code == null ? null : lookup(code);
-                if (hit == null) continue;
-                lat = hit.Value.Item1;
-                lon = hit.Value.Item2;
-                name ??= hit.Value.Item3;
-            }
-            result.Add(new CpStopDto(name ?? "", lat.Value, lon.Value, Str(Find(s, StopTimeKeys, false))));
-        }
-        return result;
-    }
+			var lat = Num(Get(s, "latitude"));
+			var lon = Num(Get(s, "longitude"));
+			var name = Str(Get(s, "station", "designation"));
+
+			if (lat == null || lon == null)
+			{
+				var code = Str(Get(s, "station", "code"));
+				var hit = code == null ? null : lookup(code);
+				if (hit == null) continue;
+				lat = hit.Value.Item1;
+				lon = hit.Value.Item2;
+				name ??= hit.Value.Item3;
+			}
+
+			// hora estimada (com atraso); a 1.ª paragem só tem partida, a última só chegada
+			var time = Str(Get(s, "ETA")) ?? Str(Get(s, "ETD")) ?? Str(Get(s, "arrival")) ?? Str(Get(s, "departure"));
+			result.Add(new CpStopDto(name ?? "", lat.Value, lon.Value, time));
+		}
+		return result;
+	}
 
     static JsonElement? FindNamedArray(JsonElement e, int depth)
     {
@@ -612,7 +667,26 @@ public static class CpFeed
         }
         return Deep(obj, keys, 0);
     }
-
+	
+	public static JsonElement? FindShallow(JsonElement obj, string[] keys, bool preferPosition)
+    {
+        var d = Direct(obj, keys);
+        if (d != null) return d;
+        if (preferPosition)
+        {
+            foreach (var c in PosContainers)
+            {
+                var child = Direct(obj, new[] { c });
+                if (child != null && child.Value.ValueKind == JsonValueKind.Object)
+                {
+                    var v = Direct(child.Value, keys);
+                    if (v != null) return v;
+                }
+            }
+        }
+        return null;
+    }
+	
     public static double? Num(JsonElement? e)
     {
         if (e == null) return null;
@@ -1035,7 +1109,7 @@ public static class CmFeed
         var ver = root;
         if (root.ValueKind == JsonValueKind.Array)
         {
-            var hoje = DateTime.Now.ToString("yyyyMMdd"); 
+            var hoje = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, Lisboa).ToString("yyyyMMdd"); 
             JsonElement? pick = null;
             var score = -1;
             foreach (var e in root.EnumerateArray())
@@ -1066,10 +1140,10 @@ public static class CmFeed
         foreach (var el in path.Value.EnumerateArray())
         {
             if (el.ValueKind != JsonValueKind.Object) continue;
-            var sid = CpFeed.Str(CpFeed.Find(el, new[] { "stop_id" }, false)) ?? CpFeed.Str(CpFeed.Find(el, new[] { "id" }, false));
-            var lat = CpFeed.Num(CpFeed.Find(el, new[] { "lat", "latitude" }, false));
-            var lon = CpFeed.Num(CpFeed.Find(el, new[] { "lon", "lng", "longitude" }, false));
-            var name = CpFeed.Str(CpFeed.Find(el, new[] { "name", "stop_name", "short_name" }, false));
+            var sid = CpFeed.Str(CpFeed.FindShallow(el, new[] { "stop_id" }, false)) ?? CpFeed.Str(CpFeed.FindShallow(el, new[] { "id" }, false));
+            var lat = CpFeed.Num(CpFeed.FindShallow(el, new[] { "lat", "latitude" }, false));
+            var lon = CpFeed.Num(CpFeed.FindShallow(el, new[] { "lon", "lng", "longitude" }, false));
+            var name = CpFeed.Str(CpFeed.FindShallow(el, new[] { "name", "stop_name", "short_name" }, false));
             if ((lat == null || lon == null) && sid != null && stopDict.TryGetValue(sid, out var info))
             {
                 lat = info.Lat;
@@ -1077,7 +1151,7 @@ public static class CmFeed
                 name ??= info.Name;
             }
             if (lat == null || lon == null) continue;
-            var seq = CpFeed.Num(CpFeed.Find(el, new[] { "stop_sequence" }, false)) ?? stops.Count;
+            var seq = CpFeed.Num(CpFeed.FindShallow(el, new[] { "stop_sequence" }, false)) ?? stops.Count;
             stops.Add((seq, new CmStopDto(sid, name ?? "", lat.Value, lon.Value)));
         }
         return new CmPatternRaw(shapeId, headsign, stops.OrderBy(x => x.Seq).Select(x => x.Stop).ToList());
@@ -1109,4 +1183,18 @@ public static class CmFeed
         }
         return null;
     }
+	
+	static readonly TimeZoneInfo Lisboa = ObterFusoLisboa();
+
+    static TimeZoneInfo ObterFusoLisboa()
+    {
+        foreach (var id in new[] { "Europe/Lisbon", "GMT Standard Time" })
+        {
+            try { return TimeZoneInfo.FindSystemTimeZoneById(id); }
+            catch (TimeZoneNotFoundException) { }
+            catch (InvalidTimeZoneException) { }
+        }
+        Console.WriteLine("[CM] Fuso de Lisboa não encontrado, a usar UTC.");
+        return TimeZoneInfo.Utc;
+}
 }
